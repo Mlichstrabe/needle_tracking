@@ -41,18 +41,18 @@ class OrientationProcessor:
 
         # ====== 动态平滑缓冲 ======
         from collections import deque
-        self._euler_buffer = deque(maxlen=5)  # 🔥 增加到5帧（最大容量）
+        self._euler_buffer = deque(maxlen=5)  #  增加到5帧（最大容量）
 
         # ====== 新增：运动检测 ======
         self._last_euler = None
-        self._motion_threshold = 2.0# 只保留最近3帧
+        self._motion_threshold = 2.0
 
     def reset(self):
         """重置"""
         self._euler = np.array([0.0, 0.0, 0.0])
         self._yaw_offset = 0.0
         self._euler_buffer.clear()
-        self._last_euler = None  # 🔥 新增：重置运动检测
+        self._last_euler = None  #  新增：重置运动检测
         print("✓ 姿态处理器已重置")
 
     def process_euler(self, roll, pitch, yaw):
@@ -86,13 +86,13 @@ class OrientationProcessor:
 
             # ====== 动态窗口大小 ======
             if max_delta > self._motion_threshold:
-                # 🔥 快速运动：缩小窗口（减少延迟）
+                #  快速运动：缩小窗口（减少延迟）
                 target_buffer_size = 2
             elif max_delta > 0.5:
-                # 🔥 中速运动：中等窗口
+                #  中速运动：中等窗口
                 target_buffer_size = 3
             else:
-                # 🔥 静止/微动：大窗口（更平滑）
+                #  静止/微动：大窗口（更平滑）
                 target_buffer_size = 5
 
             # 动态调整缓冲区大小
@@ -106,7 +106,7 @@ class OrientationProcessor:
 
         # ====== 4. 加权平均（优先新数据） ======
         if len(self._euler_buffer) >= 2:
-            # 🔥 指数加权平均：权重从旧到新递增
+            #  指数加权平均：权重从旧到新递增
             weights = np.array([0.6 ** i for i in range(len(self._euler_buffer) - 1, -1, -1)])
             weights /= weights.sum()  # 归一化
 
@@ -144,5 +144,3 @@ class OrientationProcessor:
                                np.max(np.abs(self._euler - self._last_euler)) > self._motion_threshold
         }
 
-# 向后兼容别名
-OrientationEKF = OrientationProcessor

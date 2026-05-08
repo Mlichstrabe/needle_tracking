@@ -61,6 +61,9 @@ class MainWindow(QMainWindow):
         self._last_needle_direction = np.array([0, 0, -1])
         self._needle_direction = [0, 0, -1]
 
+        self._cached_imu_pos = np.zeros(3)
+        self._cached_tip_pos = np.zeros(3)
+
         self._filtered_quat = None
         self._filter_mode = "normal"
         self._stable_alpha = 0.08
@@ -264,6 +267,8 @@ class MainWindow(QMainWindow):
             self._current_euler = list(euler)
 
             imu_pos, tip_pos = self._calculate_positions_fast(quaternion)
+            self._cached_imu_pos = imu_pos
+            self._cached_tip_pos = tip_pos
             self._update_needle_direction_fast(quaternion)
             self.gl_widget.update_data(imu_pos, tip_pos)
 
@@ -272,32 +277,31 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
 
     def _apply_smart_filter(self, quaternion):
-        q = list(quaternion)
+        q = np.asarray(quaternion, dtype=float)
 
         if self._filtered_quat is None:
-            self._filtered_quat = q[:]
-            return q
+            self._filtered_quat = q.copy()
+            return q.tolist()
 
-        dot = sum(a * b for a, b in zip(q, self._filtered_quat))
+        dot = np.dot(q, self._filtered_quat)
         if dot < 0:
-            q = [-x for x in q]
+            q = -q
             dot = -dot
 
         distance = 1.0 - abs(dot)
 
         if distance < self._static_threshold:
-            return self._filtered_quat[:]
+            return self._filtered_quat.tolist()
 
         alpha = self._stable_alpha if distance < 0.005 else min(self._stable_alpha * 3, 0.25)
 
-        for i in range(4):
-            self._filtered_quat[i] = (1 - alpha) * self._filtered_quat[i] + alpha * q[i]
+        self._filtered_quat = (1 - alpha) * self._filtered_quat + alpha * q
 
-        norm = sum(x * x for x in self._filtered_quat) ** 0.5
+        norm = np.linalg.norm(self._filtered_quat)
         if norm > 0.001:
-            self._filtered_quat = [x / norm for x in self._filtered_quat]
+            self._filtered_quat /= norm
 
-        return self._filtered_quat[:]
+        return self._filtered_quat.tolist()
 
     def _calculate_positions_fast(self, quaternion):
         direction = needle_axis_for_position(quaternion)
@@ -379,7 +383,8 @@ class MainWindow(QMainWindow):
         self.imu_panel.update_quaternion(self._current_quaternion)
         self.imu_panel.update_euler(self._current_euler)
 
-        imu_pos, tip_pos = self._calculate_positions_fast(self._current_quaternion)
+        imu_pos = self._cached_imu_pos
+        tip_pos = self._cached_tip_pos
 
         self.imu_panel.update_position(imu_pos)
         self.needle_panel.update_tip_position(tip_pos)
@@ -430,7 +435,7 @@ class MainWindow(QMainWindow):
         if phase == "idle":
             return
 
-        imu_pos = [0, 0, 0]
+        imu_pos = self._cached_imu_pos
 
         if phase == "aligning":
             angle, is_aligned = self.puncture_session.check_alignment(
@@ -490,8 +495,7 @@ class MainWindow(QMainWindow):
         self.puncture_panel.setVisible(True)
         self.puncture_panel.set_model_loaded(True)
 
-        vertices = np.array(model_data["vertices"])
-        center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+        center = model_data["center"]
         self.target_point = center + np.array([30, -25, 60])
         self.gl_widget.set_bleeding_point(self.target_point)
 

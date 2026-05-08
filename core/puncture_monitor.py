@@ -1,5 +1,6 @@
 """穿刺姿态监测模块 - 只负责姿态相关计算"""
 import numpy as np
+from core.imu_kinematics import needle_axis_scene_normalized
 
 
 class PunctureMonitor:
@@ -43,6 +44,14 @@ class PunctureMonitor:
         """设置偏离阈值"""
         self.threshold = float(threshold)
 
+    def _prepare_quaternion(self, q):
+        """归一化并校正符号，返回与参考四元数对齐的四元数"""
+        q_cur = np.array(q, dtype=float)
+        q_cur /= np.linalg.norm(q_cur)
+        if np.dot(self.reference_quaternion, q_cur) < 0:
+            q_cur = -q_cur
+        return q_cur
+
     def check_deviation(self, current_quaternion):
         """检查姿态偏离（基于针尖方向向量）
 
@@ -56,17 +65,14 @@ class PunctureMonitor:
         if not self.is_locked or self.reference_quaternion is None:
             return 0.0, False
 
-        # 归一化当前四元数
-        q_cur = np.array(current_quaternion, dtype=float)
-        q_cur = q_cur / np.linalg.norm(q_cur)
+        q_cur = self._prepare_quaternion(current_quaternion)
 
-        # 防止符号跳变
-        if np.dot(self.reference_quaternion, q_cur) < 0:
-            q_cur = -q_cur
+        # 使用与主窗口一致的方向计算
+        ref_direction = needle_axis_scene_normalized(self.reference_quaternion)
+        cur_direction = needle_axis_scene_normalized(q_cur)
 
-        # 使用方向向量计算偏离角度
-        ref_direction = self._quat_to_direction(self.reference_quaternion)
-        cur_direction = self._quat_to_direction(q_cur)
+        if ref_direction is None or cur_direction is None:
+            return 0.0, False
 
         # 计算两个方向向量的夹角
         dot = np.clip(np.dot(ref_direction, cur_direction), -1.0, 1.0)
@@ -87,11 +93,7 @@ class PunctureMonitor:
         if not self.is_locked or self.reference_quaternion is None:
             return 0.0, 0.0, []
 
-        q_cur = np.array(current_quaternion, dtype=float)
-        q_cur = q_cur / np.linalg.norm(q_cur)
-
-        if np.dot(self.reference_quaternion, q_cur) < 0:
-            q_cur = -q_cur
+        q_cur = self._prepare_quaternion(current_quaternion)
 
         # 计算误差四元数
         q_ref = self.reference_quaternion
@@ -99,7 +101,7 @@ class PunctureMonitor:
         q_error = self._quaternion_multiply(q_ref_inv, q_cur)
 
         # 转换为欧拉角
-        roll_err, pitch_err, yaw_err = self._quat_to_euler(q_error)
+        roll_err, pitch_err, _ = self._quat_to_euler(q_error)
 
         # 生成建议
         suggestions = []
@@ -119,33 +121,14 @@ class PunctureMonitor:
         return roll_err, pitch_err, suggestions
 
     def get_locked_direction(self):
-        """获取锁定时的针尖方向向量
+        """获取锁定时的针尖方向向量（与主窗口方向计算一致）
 
         Returns:
             direction: 单位方向向量 [x, y, z]，未锁定时返回 None
         """
         if not self.is_locked or self.reference_quaternion is None:
             return None
-        return self._quat_to_direction(self.reference_quaternion)
-
-    def _quat_to_direction(self, q):
-        """四元数转换为针尖方向向量"""
-        w, x, y, z = q
-
-        # 四元数转旋转矩阵
-        R = np.array([
-            [1 - 2*(y**2 + z**2), 2*(x*y - w*z), 2*(x*z + w*y)],
-            [2*(x*y + w*z), 1 - 2*(x**2 + z**2), 2*(y*z - w*x)],
-            [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x**2 + y**2)]
-        ])
-
-        # 针尖初始方向（沿-Z轴）
-        needle_vec = np.array([0.0, 0.0, -1.0])
-
-        # 旋转后的方向
-        direction = R @ needle_vec
-
-        return direction / np.linalg.norm(direction)
+        return needle_axis_scene_normalized(self.reference_quaternion)
 
     def _quaternion_multiply(self, q1, q2):
         """四元数乘法"""

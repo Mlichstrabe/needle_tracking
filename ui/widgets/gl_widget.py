@@ -19,7 +19,7 @@ class GLVisualizationWidget(QFrame):
 
         # 3D视图
         self.view = gl.GLViewWidget()
-        # 🔥 调整相机以适应CT模型（更大的距离和更低的仰角）
+        #  调整相机以适应CT模型（更大的距离和更低的仰角）
         self.view.setCameraPosition(distance=350, elevation=20, azimuth=45)
 
         # 性能优化设置
@@ -54,6 +54,7 @@ class GLVisualizationWidget(QFrame):
         self._guide_counter = 0
         self._gl_initialized = False
         self._camera_adjusted = False
+        self._path_lines_dirty = True
         self._needle_update_confirmed = False
         self._traj_error_shown = False
         self._guide_error_shown = False
@@ -218,7 +219,7 @@ class GLVisualizationWidget(QFrame):
     def update_data(self, imu_pos, tip_pos, max_points=500):
         """更新可视化数据"""
 
-        # 🔥 如果设置了固定针尖位置，覆盖传入的 tip_pos
+        #  如果设置了固定针尖位置，覆盖传入的 tip_pos
         if hasattr(self, '_use_fixed_tip') and self._use_fixed_tip:
             tip_pos = list(self._fixed_tip_position)
             # 重新计算 imu_pos（保持针体长度不变）
@@ -296,7 +297,7 @@ class GLVisualizationWidget(QFrame):
             except Exception as e:
                 print(f"[GL 错误] 针杆线条更新失败: {e}")
 
-        # 🔥 固定针尖模式下，不记录轨迹
+        #  固定针尖模式下，不记录轨迹
         if not (hasattr(self, '_use_fixed_tip') and self._use_fixed_tip):
             # 更新轨迹
             self._traj_counter += 1
@@ -324,7 +325,8 @@ class GLVisualizationWidget(QFrame):
                             print(f"[GL 错误] 轨迹线更新失败: {e}")
 
         # 更新虚线
-        self._update_path_lines()
+        if self._path_lines_dirty:
+            self._update_path_lines()
 
         # 更新引导线
         if hasattr(self, 'guide_line') and self.guide_line.visible():
@@ -348,7 +350,7 @@ class GLVisualizationWidget(QFrame):
 
         # ========== 预设路径虚线（蓝色）==========
         if self.preset_path_direction is not None:
-            # 🔥 使用 set_preset_path() 中设置的起点和终点
+            #  使用 set_preset_path() 中设置的起点和终点
             if hasattr(self, 'preset_path_start') and hasattr(self, 'preset_path_end'):
                 start_point = self.preset_path_start
                 end_point = self.preset_path_end
@@ -378,7 +380,7 @@ class GLVisualizationWidget(QFrame):
 
         # ========== 锁定目标虚线（橙色）==========
         if self.target_path_direction is not None:
-            # 🔥 使用 set_target_path() 中设置的起点和终点
+            #  使用 set_target_path() 中设置的起点和终点
             if hasattr(self, 'target_path_start') and hasattr(self, 'target_path_end'):
                 start_point = self.target_path_start
                 end_point = self.target_path_end
@@ -405,6 +407,8 @@ class GLVisualizationWidget(QFrame):
             if self.target_path_line is not None:
                 self.view.removeItem(self.target_path_line)
                 self.target_path_line = None
+
+        self._path_lines_dirty = False
 
     def _generate_dashed_line(self, start, end, dash_length, gap_length):
         """生成虚线顶点"""
@@ -434,12 +438,14 @@ class GLVisualizationWidget(QFrame):
         """设置预设路径（蓝色虚线）- 贯穿整个空间"""
         self.preset_path_direction = np.array(direction)
 
-        # 🔥 延长到整个可视化空间
+        #  延长到整个可视化空间
         extension_length = 500.0  # 延伸500mm（根据你的空间大小调整）
 
         # 从原点向两个方向延伸
         self.preset_path_start = -np.array(direction) * extension_length
         self.preset_path_end = np.array(direction) * extension_length
+
+        self._path_lines_dirty = True
 
         print(f"[GL] 预设路径已设置（贯穿）: {direction}")
 
@@ -447,11 +453,13 @@ class GLVisualizationWidget(QFrame):
         """设置锁定路径（橙色虚线）- 贯穿整个空间"""
         self.target_path_direction = np.array(direction)
 
-        # 🔥 延长到整个可视化空间
+        #  延长到整个可视化空间
         extension_length = 500.0
 
         self.target_path_start = -np.array(direction) * extension_length
         self.target_path_end = np.array(direction) * extension_length
+
+        self._path_lines_dirty = True
 
         print(f"[GL] 目标路径已设置（贯穿）: {direction}")
 
@@ -467,6 +475,8 @@ class GLVisualizationWidget(QFrame):
         if self.target_path_line is not None:
             self.view.removeItem(self.target_path_line)
             self.target_path_line = None
+
+        self._path_lines_dirty = True
 
         print("[GL] 所有路径虚线已清除")
 
@@ -636,16 +646,16 @@ class GLVisualizationWidget(QFrame):
         """显示穿刺点标记和法线"""
         #print(f"[GL] 正在标记穿刺点: {point}")
 
-        # 🔥 1. 显示Entry点球体标记
+        #  1. 显示Entry点球体标记
         self.puncture_point_marker.resetTransform()
         self.puncture_point_marker.translate(*point)
         self.puncture_point_marker.setVisible(True)
 
-        # 🔥 2. 显示Entry点外圈（脉冲效果）
+        #  2. 显示Entry点外圈（脉冲效果）
         self.puncture_point_glow.setData(pos=np.array([point]))
         self.puncture_point_glow.setVisible(True)
 
-        # 🔥 3. 显示法线虚线（蓝色，400mm）
+        #  3. 显示法线虚线（蓝色，400mm）
         #self.set_preset_path(normal.tolist())
 
         print(f"[GL] ✓ 穿刺点已标记")
@@ -687,12 +697,12 @@ class GLVisualizationWidget(QFrame):
         entry = np.array(entry_point, dtype=float)
         target = np.array(target_point, dtype=float)
 
-        # 🔥 计算从Target到Entry的方向（反向）
+        #  计算从Target到Entry的方向（反向）
         direction = entry - target  # 注意：这里是 entry - target，而不是 target - entry
         distance = np.linalg.norm(direction)
         direction = direction / distance  # 归一化
 
-        # 🔥 从Target点开始，向Entry方向延伸
+        #  从Target点开始，向Entry方向延伸
         extension_length = 200.0  # 延长200mm
 
         # 起点：Target点
@@ -702,23 +712,15 @@ class GLVisualizationWidget(QFrame):
         end_point = target + direction * (distance + extension_length)
 
         # 创建虚线数据（从Target到延长后的终点）
-        num_segments = 30  # 虚线段数
-        line_points = []
-
-        for i in range(num_segments):
-            t = i / (num_segments - 1)
-            point = start_point + direction * (distance + extension_length) * t
-            line_points.append(point)
-
-        line_points = np.array(line_points, dtype=np.float32)
+        dashed_line = self._generate_dashed_line(start_point, end_point, 10.0, 5.0)
 
         # 创建虚线
         self.entry_target_line = gl.GLLinePlotItem(
-            pos=line_points,
+            pos=dashed_line,
             color=(0.2, 0.6, 1.0, 0.8),  # 蓝色，半透明
             width=3.0,
             antialias=True,
-            mode='line_strip'
+            mode='lines'
         )
 
         self.view.addItem(self.entry_target_line)
@@ -730,12 +732,12 @@ class GLVisualizationWidget(QFrame):
         print(f"[GL]   总长度: {distance + extension_length:.1f} mm")
 
     def set_needle_tip_position(self, position):
-        """设置针尖位置（用于初始化）"""
+        """设置针尖固定位置（初始化+穿刺模式）"""
         self.tip_position = np.array(position, dtype=float)
-        print(f"[GL] 针尖位置已设置: {self.tip_position}")
-
-        # 🔥 立即更新显示
+        self._fixed_tip_position = self.tip_position.copy()
+        self._use_fixed_tip = True
         self._update_needle_visualization()
+        print(f"[GL] ✓ 针尖固定位置已设置: {self.tip_position}")
 
     def _update_needle_visualization(self):
         """更新针体可视化（根据当前位置和方向）"""
@@ -770,63 +772,8 @@ class GLVisualizationWidget(QFrame):
         """更新针体方向（保持针尖位置不变）"""
         self._needle_direction = np.array(direction, dtype=float)
 
-        # 🔥 更新针体可视化
+        #  更新针体可视化
         self._update_needle_visualization()
-
-    def _start_alignment_monitoring(self):
-        """启动对齐监控"""
-        from PyQt5.QtCore import QTimer
-
-        # 创建定时器，每100ms计算一次偏离
-        self.alignment_timer = QTimer()
-        self.alignment_timer.timeout.connect(self._update_alignment)
-        self.alignment_timer.start(100)  # 100ms
-
-        print("[Main] ✓ 对齐监控已启动")
-
-    def _update_alignment(self):
-        """更新对齐状态"""
-        # 检查是否有针尖方向数据
-        if not hasattr(self, '_needle_direction') or self._needle_direction is None:
-            return
-
-        # 🔥 计算当前方向与目标方向的夹角
-        current_direction = self._needle_direction
-        target_direction = self.target_direction_world
-
-        # 点积计算夹角
-        dot_product = np.dot(current_direction, target_direction)
-        dot_product = np.clip(dot_product, -1.0, 1.0)  # 防止数值误差
-        angle_error_rad = np.arccos(dot_product)
-        angle_error_deg = np.degrees(angle_error_rad)
-
-        # 🔥 更新UI显示
-        if hasattr(self, 'puncture_panel'):
-            self.puncture_panel.set_alignment_error(angle_error_deg)
-
-            # 判断是否对齐
-            if angle_error_deg < 5.0:  # 5度以内
-                self.puncture_panel.set_alignment_status("✓ 已对齐")
-            else:
-                self.puncture_panel.set_alignment_status(f"偏离 {angle_error_deg:.1f}°")
-
-        # 🔥 在控制台输出（调试用）
-        if not hasattr(self, '_last_log_time'):
-            self._last_log_time = 0
-
-        import time
-        current_time = time.time()
-        if current_time - self._last_log_time > 1.0:  # 每秒输出一次
-            print(f"[Main] 当前方向: {current_direction}")
-            print(f"[Main] 目标方向: {target_direction}")
-            print(f"[Main] 偏离角度: {angle_error_deg:.1f}°")
-            self._last_log_time = current_time
-
-    def set_needle_tip_position(self, position):
-        """设置针尖固定位置（用于穿刺模式）"""
-        self._fixed_tip_position = np.array(position, dtype=float)
-        self._use_fixed_tip = True
-        print(f"[GL] ✓ 针尖固定位置已设置: {self._fixed_tip_position}")
 
     def clear_fixed_tip_position(self):
         """清除针尖固定位置（恢复原点模式）"""

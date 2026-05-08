@@ -550,7 +550,7 @@ class CTModelPanel(QGroupBox):
 class PuncturePointPanel(QGroupBox):
     """穿刺点选择面板"""
 
-    # 🔥 新增信号
+    #  新增信号
     start_selection_clicked = pyqtSignal()
     reselect_clicked = pyqtSignal()
 
@@ -578,7 +578,7 @@ class PuncturePointPanel(QGroupBox):
         layout = QVBoxLayout()
         layout.setSpacing(8)
 
-        # 🔥 提示文字
+        #  提示文字
         self.hint_label = QLabel("请先导入CT模型")
         self.hint_label.setStyleSheet("""
             color: #aaaaaa; 
@@ -590,7 +590,7 @@ class PuncturePointPanel(QGroupBox):
         self.hint_label.setWordWrap(True)
         layout.addWidget(self.hint_label)
 
-        # 🔥 开始选择按钮
+        #  开始选择按钮
         self.start_btn = QPushButton("🎯 开始选择穿刺点")
         self.start_btn.setStyleSheet("""
             QPushButton {
@@ -757,87 +757,113 @@ class PuncturePointPanel(QGroupBox):
         self.coord_widget.setVisible(False)
         self.reselect_btn.setVisible(False)
 
-        # 🔥 新增：对齐监控方法
+    def _ensure_alignment_ui(self):
+        """确保对齐监控UI已创建"""
+        if hasattr(self, 'alignment_group'):
+            return
+
+        self.alignment_group = QWidget()
+        alignment_layout = QVBoxLayout(self.alignment_group)
+        alignment_layout.setContentsMargins(0, 8, 0, 0)
+        alignment_layout.setSpacing(5)
+
+        # 分隔线
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("background: rgba(255, 204, 0, 0.3);")
+        alignment_layout.addWidget(separator)
+
+        # 标题
+        title = QLabel("📐 角度偏差监控")
+        title.setStyleSheet("""
+               color: #ffcc00;
+               font-weight: bold;
+               font-size: 13px;
+               padding: 5px 0;
+           """)
+        alignment_layout.addWidget(title)
+
+        # 对齐状态标签
+        self.alignment_status_label = QLabel("等待连接...")
+        self.alignment_status_label.setAlignment(Qt.AlignCenter)
+        self.alignment_status_label.setStyleSheet("""
+               QLabel {
+                   font-size: 13px;
+                   font-weight: bold;
+                   padding: 8px;
+                   border-radius: 4px;
+                   background: #95a5a6;
+                   color: white;
+               }
+           """)
+        alignment_layout.addWidget(self.alignment_status_label)
+
+        # 偏离角度标签
+        self.alignment_error_label = QLabel("偏离角度: --")
+        self.alignment_error_label.setAlignment(Qt.AlignCenter)
+        self.alignment_error_label.setStyleSheet("""
+               QLabel {
+                   font-size: 24px;
+                   font-weight: bold;
+                   padding: 12px;
+                   background: rgba(52, 73, 94, 0.8);
+                   color: #3498db;
+                   border-radius: 4px;
+                   margin-top: 5px;
+                   font-family: 'Consolas', monospace;
+               }
+           """)
+        alignment_layout.addWidget(self.alignment_error_label)
+
+        main_layout = self.layout()
+        if main_layout:
+            main_layout.addWidget(self.alignment_group)
 
     def set_alignment_error(self, angle_deg):
         """设置偏离角度"""
-        # 如果没有对应的Label，先创建
-        if not hasattr(self, 'alignment_error_label'):
-            # 创建对齐监控区域
-            if not hasattr(self, 'alignment_group'):
-                self.alignment_group = QWidget()
-                alignment_layout = QVBoxLayout(self.alignment_group)
-                alignment_layout.setContentsMargins(0, 8, 0, 0)
-                alignment_layout.setSpacing(5)
-
-                # 分隔线
-                separator = QFrame()
-                separator.setFrameShape(QFrame.HLine)
-                separator.setStyleSheet("background: rgba(255, 204, 0, 0.3);")
-                alignment_layout.addWidget(separator)
-
-                # 标题
-                title = QLabel("📐 角度偏差监控")
-                title.setStyleSheet("""
-                       color: #ffcc00;
-                       font-weight: bold;
-                       font-size: 13px;
-                       padding: 5px 0;
-                   """)
-                alignment_layout.addWidget(title)
-
-                # 对齐状态标签
-                self.alignment_status_label = QLabel("等待连接...")
-                self.alignment_status_label.setAlignment(Qt.AlignCenter)
-                self.alignment_status_label.setStyleSheet("""
-                       QLabel {
-                           font-size: 13px;
-                           font-weight: bold;
-                           padding: 8px;
-                           border-radius: 4px;
-                           background: #95a5a6;
-                           color: white;
-                       }
-                   """)
-                alignment_layout.addWidget(self.alignment_status_label)
-
-                # 偏离角度标签
-                self.alignment_error_label = QLabel("偏离角度: --")
-                self.alignment_error_label.setAlignment(Qt.AlignCenter)
-                self.alignment_error_label.setStyleSheet("""
-                       QLabel {
-                           font-size: 24px;
-                           font-weight: bold;
-                           padding: 12px;
-                           background: rgba(52, 73, 94, 0.8);
-                           color: #3498db;
-                           border-radius: 4px;
-                           margin-top: 5px;
-                           font-family: 'Consolas', monospace;
-                       }
-                   """)
-                alignment_layout.addWidget(self.alignment_error_label)
-
-                # 🔥 添加到主布局
-                main_layout = self.layout()
-                if main_layout:
-                    main_layout.addWidget(self.alignment_group)
-
-        # 更新文本
-        if hasattr(self, 'alignment_error_label'):
-            self.alignment_error_label.setText(f"{angle_deg:.1f}°")
+        self._ensure_alignment_ui()
+        self.alignment_error_label.setText(f"{angle_deg:.1f}°")
 
     def set_alignment_status(self, status):
         """设置对齐状态"""
-        if not hasattr(self, 'alignment_status_label'):
-            # 如果还没创建，先调用 set_alignment_error 创建UI
-            self.set_alignment_error(0.0)
+        self._ensure_alignment_ui()
+        self.alignment_status_label.setText(status)
 
-        if hasattr(self, 'alignment_status_label'):
-            # 更新文本
-            self.alignment_status_label.setText(status)
+        if "已对齐" in status:
+            self.alignment_status_label.setStyleSheet("""
+                   QLabel {
+                       font-size: 13px;
+                       font-weight: bold;
+                       padding: 8px;
+                       border-radius: 4px;
+                       background: #2ecc71;
+                       color: white;
+                   }
+               """)
+        elif "接近对齐" in status:
+            self.alignment_status_label.setStyleSheet("""
+                   QLabel {
+                       font-size: 13px;
+                       font-weight: bold;
+                       padding: 8px;
+                       border-radius: 4px;
+                       background: #f39c12;
+                       color: white;
+                   }
+               """)
+        else:
+            self.alignment_status_label.setStyleSheet("""
+                   QLabel {
+                       font-size: 13px;
+                       font-weight: bold;
+                       padding: 8px;
+                       border-radius: 4px;
+                       background: #e74c3c;
+                       color: white;
+                   }
+               """)
 
-            # 🔥 根据状态改变颜色
+            #  根据状态改变颜色
             if "已对齐" in status:
                 self.alignment_status_label.setStyleSheet("""
                        QLabel {

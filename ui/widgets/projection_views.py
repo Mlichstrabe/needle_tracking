@@ -27,7 +27,7 @@ class ProjectionView(QWidget):
         self.needle_start = [0, 0]  # 针体起点（投影后）
         self.needle_end = [0, 0]  # 针体终点（投影后）
         self.target_line = None  # 目标方向虚线（锁定后）
-        self.preset_line = None  # 🔥 新增：预设路径虚线（选择路径后）
+        self.preset_line = None  # 预设路径虚线（选择路径后）
         self.angle_deviation = 0.0  # 角度偏差
         self.is_perpendicular = False  # 针体是否垂直于视图
 
@@ -50,7 +50,7 @@ class ProjectionView(QWidget):
         if any(np.isnan(x) or np.isinf(x) for x in self.needle_start + self.needle_end):
             return
 
-        # 🔥 计算当前方向角度（从IMU指向针尖）
+        #  计算当前方向角度（从IMU指向针尖）
         dx = self.needle_start[0] - self.needle_end[0]  # 针尖 - IMU
         dy = self.needle_start[1] - self.needle_end[1]
 
@@ -59,7 +59,6 @@ class ProjectionView(QWidget):
         if length < 0.001:
             self.angle_deviation = 0.0
             self.target_line = None
-            self.is_perpendicular = True
             self.update()
             return
 
@@ -100,7 +99,7 @@ class ProjectionView(QWidget):
         self.update()
 
     def set_preset_line(self, preset_direction):
-        """🔥 新增：设置预设路径虚线（蓝色）
+        """新增：设置预设路径虚线（蓝色）
 
         Args:
             preset_direction: [dx, dy, dz] 预设路径方向向量
@@ -158,14 +157,14 @@ class ProjectionView(QWidget):
         painter.drawText(w - 15, cy - 5, self.axis1)
         painter.drawText(cx + 5, 15, self.axis2)
 
-        # 🔥 如果针体垂直于此视图，显示提示
+        #  如果针体垂直于此视图，显示提示
         if self.is_perpendicular:
             painter.setPen(QPen(QColor(150, 150, 150)))
             painter.setFont(QFont("Arial", 9))
             painter.drawText(self.rect(), Qt.AlignCenter, "针体垂直于此视图")
             return
 
-        # ====== 🔥 绘制预设路径虚线（青蓝色，最底层） ======
+        # ===== 绘制预设路径虚线（青蓝色，最底层） ======
         if self.preset_line is not None:
             try:
                 painter.setPen(QPen(QColor(100, 200, 255, 180), 3, Qt.DashLine))
@@ -378,7 +377,7 @@ class ProjectionPanel(QFrame):
 
         # 目标方向（锁定后）
         self.target_direction = None
-        # 🔥 新增：预设路径方向（选择路径后）
+        # 新增：预设路径方向（选择路径后）
         self.preset_path = None
 
     def set_target_direction(self, direction):
@@ -390,7 +389,7 @@ class ProjectionPanel(QFrame):
         self.target_direction = direction
 
     def set_preset_path(self, path_direction):
-        """🔥 新增：设置预设路径方向（选择路径后调用）
+        """新增：设置预设路径方向（选择路径后调用）
 
         Args:
             path_direction: [dx, dy, dz] 预设路径方向向量
@@ -404,7 +403,7 @@ class ProjectionPanel(QFrame):
         self.top_view.set_preset_line(path_direction)
 
     def clear_preset_path(self):
-        """🔥 新增：清除预设路径虚线"""
+        """新增：清除预设路径虚线"""
         self.preset_path = None
         self.front_view.set_preset_line(None)
         self.side_view.set_preset_line(None)

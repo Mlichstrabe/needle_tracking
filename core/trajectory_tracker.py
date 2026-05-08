@@ -11,7 +11,7 @@ class TrajectoryTracker:
         self.position = np.array([0.0, 0.0, 0.0])
         self.velocity = np.array([0.0, 0.0, 0.0])
 
-        # ===== 🔥 优化后的参数 =====
+        # =====  优化后的参数 =====
         self.sensitivity = 1.8  # 从1.5提升到1.8
         self.dead_zone = 0.08  # ✅ 从0.25降低
         self.velocity_decay_moving = 0.99  # ✅ 新增：运动中衰减
@@ -143,14 +143,9 @@ class TrajectoryTracker:
             # 运动状态：保持惯性
             self.velocity *= self.velocity_decay_moving
 
-        # 速度太小直接归零
-        if np.linalg.norm(self.velocity) < 3.0:  # 从5.0降低
+        if np.linalg.norm(self.velocity) < 3.0:
             self.velocity = np.zeros(3)
-            self.is_static = True  # ← 同步状态
-
-        # 速度太小直接归零
-        if np.linalg.norm(self.velocity) < 5.0:
-            self.velocity = np.zeros(3)
+            self.is_static = True
 
         # ====== 10. 速度限制 ======
         vel_mag = np.linalg.norm(self.velocity)
@@ -201,9 +196,9 @@ class TrajectoryTracker:
         if len(self.acc_history) < 3:
             return False
 
-        # 计算加速度变化率
+        # 计算相邻帧加速度变化率
         acc_diff = np.linalg.norm(
-            self.acc_history[-1] - self.acc_history[0]
+            self.acc_history[-1] - self.acc_history[-2]
         )
 
         return acc_diff > self.motion_threshold

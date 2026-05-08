@@ -9,8 +9,6 @@ import numpy as np
 
 
 
-
-
 class OrientationLockWidget(QGroupBox):
     """姿态锁定控件"""
 
@@ -290,7 +288,6 @@ class SimulationPanel(QFrame):
         self.toggle_btn.clicked.connect(self._toggle_simulation)
         layout.addWidget(self.toggle_btn)
 
-
         # ====== 姿态锁定控件 ======
         self.lock_widget = OrientationLockWidget()
         self.lock_widget.lock_toggled.connect(self._on_lock_toggled)
@@ -323,7 +320,7 @@ class SimulationPanel(QFrame):
                 }
             """)
 
-            # 🔥 简化：只发射启动信号
+            #  简化：只发射启动信号
             self.simulation_started.emit()
             print("[Simulation] 引导已启动")
 
@@ -344,13 +341,12 @@ class SimulationPanel(QFrame):
                 }
             """)
 
-            # 🔥 停止时解锁（如果已锁定）
+            #  停止时解锁（如果已锁定）
             if self.lock_widget.is_locked:
                 self.lock_widget._toggle_lock()
 
             self.simulation_stopped.emit()
             print("[Simulation] 引导已停止")
-
 
     def _on_lock_toggled(self, is_locked):
         """姿态锁定状态改变"""

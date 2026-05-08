@@ -173,28 +173,27 @@ class DeviceManager(QObject):
         # ====== 四元数滤波 ======
         q = self._data_cache.get('quaternion')
         if q is not None:
-            q = list(q)  # 确保可修改
+            q = np.asarray(q, dtype=float)
 
             if self._filtered_quat is None:
-                self._filtered_quat = q[:]
+                self._filtered_quat = q.copy()
             else:
                 # 确保最短路径（避免符号突变）
-                dot = sum(a * b for a, b in zip(q, self._filtered_quat))
+                dot = np.dot(q, self._filtered_quat)
                 if dot < 0:
-                    q = [-x for x in q]
+                    q = -q
 
                 # 一阶低通滤波
                 alpha = self._filter_alpha
-                for i in range(4):
-                    self._filtered_quat[i] = (1 - alpha) * self._filtered_quat[i] + alpha * q[i]
+                self._filtered_quat = (1 - alpha) * self._filtered_quat + alpha * q
 
                 # 归一化
-                norm = sum(x * x for x in self._filtered_quat) ** 0.5
+                norm = np.linalg.norm(self._filtered_quat)
                 if norm > 0.001:
-                    self._filtered_quat = [x / norm for x in self._filtered_quat]
+                    self._filtered_quat /= norm
 
             # 用滤波后的值替换
-            self._data_cache['quaternion'] = self._filtered_quat[:]
+            self._data_cache['quaternion'] = self._filtered_quat.copy()
 
         # 发送数据
         data = {k: (v[:] if isinstance(v, list) else (v.copy() if v is not None else None))
