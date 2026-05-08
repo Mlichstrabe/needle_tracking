@@ -1,0 +1,11 @@
+# 使用系统提示音的跨平台方法
+import sys
+from PyQt5.QtWidgets import QApplication
+
+def play_system_beep():
+    QApplication.beep()
+
+# 在 _on_deviation_detected 中使用
+def _on_deviation_detected(self, angle):
+    print(f"⚠️ 警告：姿态偏离 {angle:.2f}°！")
+    QApplication.beep()  # 系统提示音
