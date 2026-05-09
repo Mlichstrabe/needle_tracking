@@ -7,6 +7,13 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import Qt
+
+# 启用高DPI缩放（必须在QApplication创建之前）
+QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
 from ui.main_window import MainWindow
 

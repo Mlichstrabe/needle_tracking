@@ -14,10 +14,8 @@ from PyQt5.QtWidgets import (
     QFrame,
     QMessageBox,
     QSizePolicy,
+    QScrollArea,
 )
-
-os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
-os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
 
 from core.device_manager import DeviceManager
 from core.dicom_loader import DicomModelLoader
@@ -114,13 +112,6 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter)
 
-        self.setStyleSheet(
-            """
-            QMainWindow { background: #0d0d1a; }
-            QSplitter::handle { background: #2a2a4a; width: 3px; }
-            """
-        )
-
     def _create_center_panel(self):
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -172,7 +163,15 @@ class MainWindow(QMainWindow):
             """
         )
 
-        layout = QVBoxLayout(panel)
+        # 滚动区域，防止内容被裁
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }"
+                             "QScrollBar:vertical { width: 6px; }")
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setSpacing(10)
         layout.setContentsMargins(8, 8, 8, 8)
 
@@ -184,6 +183,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sim_panel)
 
         layout.addStretch()
+        scroll.setWidget(content)
+
+        outer_layout = QVBoxLayout(panel)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
         return panel
 
     def _connect_signals(self):
