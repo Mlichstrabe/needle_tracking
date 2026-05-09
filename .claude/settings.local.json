@@ -4,7 +4,20 @@
       "PowerShell(& C:/Users/Lu/AppData/Local/Programs/Python/Python314/python.exe -m pip install PyQt5)",
       "PowerShell(Get-Command python, python3 -ErrorAction SilentlyContinue)",
       "PowerShell(& C:\\\\Users\\\\Lu\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python.exe --version 2>&1)",
-      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\anaconda3\\\\python.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:USERPROFILE\\\\miniconda3\\\\python.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:LOCALAPPDATA\\\\anaconda3\\\\python.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:LOCALAPPDATA\\\\miniconda3\\\\python.exe\" -ErrorAction SilentlyContinue)"
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\anaconda3\\\\python.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:USERPROFILE\\\\miniconda3\\\\python.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:LOCALAPPDATA\\\\anaconda3\\\\python.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:LOCALAPPDATA\\\\miniconda3\\\\python.exe\" -ErrorAction SilentlyContinue)",
+      "Bash(git add *)",
+      "Bash(git restore *)",
+      "Bash(git checkout *)",
+      "Bash(git commit -m '@ *)",
+      "Bash(git push *)",
+      "Bash(Get-ChildItem -Recurse -Depth 2)",
+      "Bash(Select-Object Mode, Length, LastWriteTime, Name)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(git branch *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('core/device_manager.py'\\).read\\(\\)\\); ast.parse\\(open\\('ui/main_window.py'\\).read\\(\\)\\); ast.parse\\(open\\('ui/widgets/panels.py'\\).read\\(\\)\\); print\\('所有文件语法检查通过'\\)\")",
+      "Bash(python *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git commit *)"
     ]
   }
 }
