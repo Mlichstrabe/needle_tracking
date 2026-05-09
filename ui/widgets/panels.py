@@ -183,6 +183,9 @@ class NeedleConfigPanel(QGroupBox):
     clear_trajectory_clicked = pyqtSignal()
     reset_view_clicked = pyqtSignal()
 
+    #  新增：校准信号
+    calibration_clicked = pyqtSignal()
+
 
     def __init__(self, parent=None):
         super().__init__("针具配置", parent)
@@ -283,9 +286,8 @@ class NeedleConfigPanel(QGroupBox):
         btn_layout.addWidget(self.btn_reset_view, 1, 0)
 
         # 预留按钮位置
-        self.btn_calibrate = QPushButton("校准")
-        self.btn_calibrate.setToolTip("进行IMU校准")
-        self.btn_calibrate.setEnabled(False)
+        self.btn_calibrate = QPushButton("校准传感器")
+        self.btn_calibrate.setToolTip("启动IMU校准：保持静止3秒完成陀螺仪零偏校准 + 磁力计校准")
         btn_layout.addWidget(self.btn_calibrate, 1, 1)
 
         layout.addLayout(btn_layout)
@@ -321,6 +323,7 @@ class NeedleConfigPanel(QGroupBox):
         self.btn_zero.clicked.connect(self.zero_position_clicked.emit)
         self.btn_clear.clicked.connect(self.clear_trajectory_clicked.emit)
         self.btn_reset_view.clicked.connect(self.reset_view_clicked.emit)
+        self.btn_calibrate.clicked.connect(self.calibration_clicked.emit)
 
 
     def get_needle_length(self):

@@ -39,8 +39,10 @@ class DeviceManager(QObject):
             'mag': None
         }
 
-        self._filtered_quat = None
-        self._filter_alpha = 0.2
+        # ====== 陀螺仪零偏校准 ======
+        self._gyro_bias = np.zeros(3)
+        self._gyro_calib_samples = []
+        self._gyro_calib_done = False
 
     def connect(self, port=None, baudrate=None):  # ← 改这里：允许动态指定
         """连接设备"""
@@ -85,8 +87,46 @@ class DeviceManager(QObject):
             self.serial.close()
 
         self.is_connected = False
+        self._gyro_calib_done = False
+        self._gyro_calib_samples = []
         self.disconnected.emit()
         print("✓ 设备已断开")
+
+    # ====== 陀螺仪零偏校准 ======
+
+    def start_gyro_bias_calibration(self):
+        """开始陀螺仪零偏采集（需保持静止）"""
+        self._gyro_calib_samples = []
+        self._gyro_calib_done = False
+        print("✓ 陀螺仪零偏校准开始，请保持传感器静止3秒...")
+
+    def _feed_gyro_for_calib(self, gyro):
+        """向校准器送入一帧陀螺数据"""
+        if self._gyro_calib_done:
+            return
+        self._gyro_calib_samples.append(gyro.copy())
+        if len(self._gyro_calib_samples) >= 150:  # ~3秒 @ 50Hz
+            self._finish_gyro_bias_calibration()
+
+    def _finish_gyro_bias_calibration(self):
+        """完成陀螺仪零偏校准"""
+        if not self._gyro_calib_samples:
+            return
+        samples = np.array(self._gyro_calib_samples)
+        self._gyro_bias = np.mean(samples, axis=0)
+        self._gyro_calib_done = True
+        print(f"✓ 陀螺仪零偏校准完成: "
+              f"[{self._gyro_bias[0]:.4f}, {self._gyro_bias[1]:.4f}, {self._gyro_bias[2]:.4f}] rad/s")
+
+    def get_gyro_bias(self):
+        """获取陀螺仪零偏"""
+        return self._gyro_bias.copy() if self._gyro_calib_done else None
+
+    def get_calibrated_gyro(self, raw_gyro):
+        """获取去偏置后的陀螺仪数据"""
+        if self._gyro_calib_done:
+            return raw_gyro - self._gyro_bias
+        return raw_gyro
 
     def _read_loop(self):
         """数据读取循环"""
@@ -139,7 +179,11 @@ class DeviceManager(QObject):
                 gx = struct.unpack('<h', frame[2:4])[0] / 32768.0 * 2000 * np.pi / 180
                 gy = struct.unpack('<h', frame[4:6])[0] / 32768.0 * 2000 * np.pi / 180
                 gz = struct.unpack('<h', frame[6:8])[0] / 32768.0 * 2000 * np.pi / 180
-                return {'gyro': np.array([gx, gy, gz])}
+                gyro = np.array([gx, gy, gz])
+                # 送入零偏校准器（仅首次连接时）
+                if not self._gyro_calib_done:
+                    self._feed_gyro_for_calib(gyro)
+                return {'gyro': gyro}
 
             elif data_type == 0x53:
                 roll = struct.unpack('<h', frame[2:4])[0] / 32768.0 * 180
@@ -166,36 +210,11 @@ class DeviceManager(QObject):
         return None
 
     def _emit_data(self):
-        """发送完整数据包（带简单滤波）"""
+        """发送完整数据包（去掉冗余滤波，只做透传）"""
         if self._data_cache['quaternion'] is None and self._data_cache['euler'] is None:
             return
 
-        # ====== 四元数滤波 ======
-        q = self._data_cache.get('quaternion')
-        if q is not None:
-            q = np.asarray(q, dtype=float)
-
-            if self._filtered_quat is None:
-                self._filtered_quat = q.copy()
-            else:
-                # 确保最短路径（避免符号突变）
-                dot = np.dot(q, self._filtered_quat)
-                if dot < 0:
-                    q = -q
-
-                # 一阶低通滤波
-                alpha = self._filter_alpha
-                self._filtered_quat = (1 - alpha) * self._filtered_quat + alpha * q
-
-                # 归一化
-                norm = np.linalg.norm(self._filtered_quat)
-                if norm > 0.001:
-                    self._filtered_quat /= norm
-
-            # 用滤波后的值替换
-            self._data_cache['quaternion'] = self._filtered_quat.copy()
-
-        # 发送数据
+        # 发送数据（不滤波，由主窗口统一处理）
         data = {k: (v[:] if isinstance(v, list) else (v.copy() if v is not None else None))
                 for k, v in self._data_cache.items()}
         self.data_received.emit(data)
