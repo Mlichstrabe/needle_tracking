@@ -67,10 +67,10 @@ class GLVisualizationWidget(QFrame):
         self._init_objects()
         self._init_simulation_objects()
 
-        # ====== 新增: CT头部模型对象占位符 ======
-        self.head_mesh = None  # 这是关键：使用 pyqtgraph 的 GLMeshItem
+        # ====== CT头部模型 ======
+        self.head_mesh = None
         self.head_model_visible = True
-        self.head_model_color = (0.9, 0.9, 0.9, 0.6)  # 默认半透明白色
+        self.head_model_color = (0.9, 0.9, 0.9, 0.6)
 
         print("[GL] 性能优化已启用")
 

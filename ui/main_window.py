@@ -32,6 +32,7 @@ from ui.widgets.gl_widget import GLVisualizationWidget
 from ui.widgets.panels import (
     CTModelPanel,
     DeviceConnectionPanel,
+    GuidanceArrowWidget,
     IMUDataPanel,
     NeedleConfigPanel,
     PuncturePointPanel,
@@ -62,13 +63,8 @@ class MainWindow(QMainWindow):
         self._cached_imu_pos = np.zeros(3)
         self._cached_tip_pos = np.zeros(3)
 
-        # ====== 增强滤波：运动检测 + 静止冻结 + 自适应 ======
-        self._filtered_quat = None
-        self._filter_mode = "stable"  # 默认启用增强滤波
-        self._raw_quat_history = []   # 原始四元数滚动窗口
-        self._static_frame_count = 0
-        self._motion_threshold = 0.3  # 度：超过此值判定为运动
-        self._acc_mag_history = []
+        # 直接使用IMU原始数据（依赖IMU自带滤波）
+        self._filter_mode = "normal"
 
         self.needle_length = 162.0
 
@@ -179,6 +175,10 @@ class MainWindow(QMainWindow):
         self.puncture_panel.setVisible(False)
         layout.addWidget(self.puncture_panel)
 
+        # 2D方向指示器（轻量罗盘箭头）
+        self.guidance_widget = GuidanceArrowWidget()
+        layout.addWidget(self.guidance_widget)
+
         self.sim_panel = SimulationPanel()
         layout.addWidget(self.sim_panel)
 
@@ -264,13 +264,9 @@ class MainWindow(QMainWindow):
         try:
             quaternion = data.get("quaternion")
             euler = data.get("euler")
-            acc = data.get("acc")  # 用于加速度幅值校验
 
             if quaternion is None or euler is None:
                 return
-
-            if self._filter_mode == "stable":
-                quaternion = self._apply_smart_filter(quaternion, acc)
 
             self._current_quaternion = list(quaternion)
             self._current_euler = list(euler)
@@ -284,97 +280,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"✗ 数据处理错误: {e}")
             traceback.print_exc()
-
-    def _apply_smart_filter(self, quaternion, acc=None):
-        """增强四元数滤波：运动检测 + 静止冻结 + 自适应alpha + 加速度幅值校验
-
-        Args:
-            quaternion: 原始四元数 [w,x,y,z]
-            acc: 当前加速度计数据（可选），用于幅值校验
-
-        Returns:
-            滤波后的四元数列表 [w,x,y,z]
-        """
-        q = np.asarray(quaternion, dtype=float)
-
-        # 首帧初始化
-        if self._filtered_quat is None:
-            self._filtered_quat = q.copy()
-            self._raw_quat_history = [q.copy()]
-            self._static_frame_count = 0
-            return q.tolist()
-
-        # ----- 1. 运动检测：基于滚动窗口的四元数角速度 -----
-        self._raw_quat_history.append(q.copy())
-        if len(self._raw_quat_history) > 5:
-            self._raw_quat_history.pop(0)
-
-        max_angular_delta = 0.0
-        for i in range(1, len(self._raw_quat_history)):
-            dot_raw = abs(np.dot(self._raw_quat_history[i], self._raw_quat_history[i - 1]))
-            dot_raw = min(dot_raw, 1.0)
-            # 四元数夹角 θ = 2*arccos(|dot|)
-            delta_deg = 2.0 * np.degrees(np.arccos(dot_raw))
-            if delta_deg > max_angular_delta:
-                max_angular_delta = delta_deg
-
-        is_moving = max_angular_delta > self._motion_threshold
-
-        # ----- 2. 静止冻结 -----
-        if not is_moving:
-            self._static_frame_count += 1
-        else:
-            self._static_frame_count = 0
-
-        # 连续 N 帧判定为静止则完全冻结输出
-        if self._static_frame_count >= 4 and not is_moving:
-            return self._filtered_quat.tolist()
-
-        # ----- 3. 加速度幅值校验 -----
-        acc_weight = 1.0
-        if acc is not None:
-            acc_mag = np.linalg.norm(acc)
-            # 缓冲加速度幅值用于平滑判断
-            self._acc_mag_history.append(acc_mag)
-            if len(self._acc_mag_history) > 10:
-                self._acc_mag_history.pop(0)
-            avg_acc_mag = np.mean(self._acc_mag_history)
-
-            # 偏离 1g 越远，越不信任加速度计参考
-            deviation = abs(avg_acc_mag - 9.81)
-            if deviation > 0.3:
-                acc_weight = 0.2          # 运动加速度大 → 几乎不信任
-            elif deviation > 0.1:
-                acc_weight = 0.6          # 轻微运动 → 适度信任
-            # else: 接近静止 1g → 完全信任
-
-        # ----- 4. 自适应alpha -----
-        if max_angular_delta < 0.3:
-            alpha = 0.04    # 微动：极慢跟踪
-        elif max_angular_delta < 1.0:
-            alpha = 0.10    # 轻微运动
-        elif max_angular_delta < 5.0:
-            alpha = 0.30    # 中等运动
-        elif max_angular_delta < 20.0:
-            alpha = 0.60    # 快速运动
-        else:
-            alpha = 0.90    # 剧烈运动：快速跟踪
-
-        # 加速度校验压低alpha（降低对不可靠加速度参考的依赖）
-        alpha *= acc_weight
-
-        # ----- 5. 一阶低通滤波 -----
-        dot = np.dot(q, self._filtered_quat)
-        if dot < 0:
-            q = -q
-
-        self._filtered_quat = (1 - alpha) * self._filtered_quat + alpha * q
-
-        norm = np.linalg.norm(self._filtered_quat)
-        if norm > 1e-8:
-            self._filtered_quat /= norm
-
-        return self._filtered_quat.tolist()
 
     def _calculate_positions_fast(self, quaternion):
         direction = needle_axis_for_position(quaternion)
@@ -398,6 +303,7 @@ class MainWindow(QMainWindow):
     def _stop_alignment_monitoring(self):
         if self.alignment_timer.isActive():
             self.alignment_timer.stop()
+        self.guidance_widget.hide_guidance()
 
     def _on_device_connected_wrapper(self):
         self._on_connection_changed(True)
@@ -477,10 +383,16 @@ class MainWindow(QMainWindow):
         print("[Main] 穿刺路径引导模式已启动")
         default_path = [0, 0, 1]
         self.projection_panel.set_preset_path(default_path)
+
+        # 设置对齐目标方向并启动监控
+        self.target_direction_world = np.array(default_path, dtype=float)
+        self._start_alignment_monitoring()
+        self.puncture_panel.setVisible(True)
         print(f"[Main] ✓ 已设置预设路径: {default_path}")
 
     def _on_simulation_stopped(self):
         print("[Main] 穿刺路径引导模式已停止")
+        self._stop_alignment_monitoring()
         self.projection_panel.clear_preset_path()
         self.projection_panel.clear_target()
         self.gl_widget.clear_path_lines()
@@ -488,6 +400,7 @@ class MainWindow(QMainWindow):
     def _on_target_direction_changed(self, direction):
         print(f"[Main] 目标路径方向: {direction}")
         d = direction.tolist()
+        self.target_direction_world = np.array(d, dtype=float)
         self.projection_panel.set_preset_path(d)
         self.gl_widget.set_preset_path(d)
 
@@ -708,6 +621,7 @@ class MainWindow(QMainWindow):
         self.target_direction_world = entry_to_target / np.linalg.norm(entry_to_target)
         print(f"[Main] 目标方向（Entry→Target）: {self.target_direction_world}")
 
+        self.puncture_panel.setVisible(True)
         self._start_alignment_monitoring()
 
         QMessageBox.information(
@@ -741,8 +655,18 @@ class MainWindow(QMainWindow):
         self.puncture_panel.set_alignment_error(angle_error_deg)
         if angle_error_deg < 5.0:
             self.puncture_panel.set_alignment_status("✓ 已对齐")
+            if angle_error_deg < 2.0:
+                self.puncture_panel.set_alignment_status("★ 完美对齐")
         else:
             self.puncture_panel.set_alignment_status(f"偏离 {angle_error_deg:.1f}°")
+
+        # 方向指示器：显示"针尖该往哪个方向摆"（target在垂直于current平面上的投影）
+        curr_u = np.asarray(current_direction, dtype=float)
+        curr_u = curr_u / np.linalg.norm(curr_u)
+        targ_u = np.asarray(target_direction, dtype=float)
+        targ_u = targ_u / np.linalg.norm(targ_u)
+        correction = targ_u - curr_u * np.dot(targ_u, curr_u)
+        self.guidance_widget.set_guidance(correction, angle_error_deg)
 
         if not hasattr(self, "_last_log_time"):
             self._last_log_time = 0.0

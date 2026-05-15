@@ -17,7 +17,8 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('core/device_manager.py'\\).read\\(\\)\\); ast.parse\\(open\\('ui/main_window.py'\\).read\\(\\)\\); ast.parse\\(open\\('ui/widgets/panels.py'\\).read\\(\\)\\); print\\('所有文件语法检查通过'\\)\")",
       "Bash(python *)",
       "Bash(git commit -m ' *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(git show *)"
     ]
   }
 }

@@ -5,7 +5,9 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QSlider, QProgressBar, QCheckBox, QComboBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
+import math
+from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPolygonF
+from PyQt5.QtCore import QRect, QPointF
 
 
 class IMUDataPanel(QGroupBox):
@@ -784,3 +786,121 @@ class PuncturePointPanel(QGroupBox):
                 color: white;
             }}
         """)
+
+
+class GuidanceArrowWidget(QWidget):
+    """对准引导瞄准镜 — 十字线+偏移点，直观显示偏离方向"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._angle_deg = 0.0
+        self._dot_x = 0.0
+        self._dot_y = 0.0
+        self._visible = False
+        self.setMinimumSize(90, 90)
+        self.setMaximumSize(200, 200)
+
+    def set_guidance(self, correction_3d, angle_deg):
+        """设置引导方向"""
+        self._angle_deg = angle_deg
+        cx, cy, _ = correction_3d
+        mag = (cx*cx + cy*cy + 1e-12) ** 0.5
+        self._dot_x = cx / mag if mag > 0.01 else 0.0
+        self._dot_y = -cy / mag if mag > 0.01 else 0.0
+        self._visible = True
+        self.update()
+
+    def hide_guidance(self):
+        self._visible = False
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        w, h = self.width(), self.height()
+        cx_f, cy_f = w / 2.0, h / 2.0
+        radius = min(w, h) / 2.0 - 8
+
+        # === 背景（半透明暗色圆盘）===
+        bg = QColor(15, 15, 35)
+        painter.setPen(QPen(QColor(60, 70, 100), 1.5))
+        painter.setBrush(bg)
+        painter.drawEllipse(QPointF(cx_f, cy_f), radius, radius)
+
+        if not self._visible:
+            painter.setPen(QColor(80, 80, 100))
+            fnt = QFont("Consolas", 9)
+            painter.setFont(fnt)
+            painter.drawText(QRect(int(cx_f - 30), int(cy_f + radius - 20),
+                                   60, 20), Qt.AlignCenter, "--")
+            return
+
+        # === 刻度圈 ===
+        painter.setPen(QPen(QColor(50, 60, 90), 1))
+        for i in range(12):
+            a = i * 30 * math.pi / 180
+            r1 = radius * 0.85 if i % 3 == 0 else radius * 0.92
+            r2 = radius * 0.95
+            painter.drawLine(QPointF(cx_f + r1*math.cos(a), cy_f + r1*math.sin(a)),
+                             QPointF(cx_f + r2*math.cos(a), cy_f + r2*math.sin(a)))
+
+        # === 十字线 ===
+        painter.setPen(QPen(QColor(60, 70, 100), 1))
+        inner = radius * 0.1
+        outer = radius * 0.85
+        painter.drawLine(QPointF(cx_f - outer, cy_f), QPointF(cx_f - inner, cy_f))
+        painter.drawLine(QPointF(cx_f + inner, cy_f), QPointF(cx_f + outer, cy_f))
+        painter.drawLine(QPointF(cx_f, cy_f - outer), QPointF(cx_f, cy_f - inner))
+        painter.drawLine(QPointF(cx_f, cy_f + inner), QPointF(cx_f, cy_f + outer))
+
+        # === 中心点（目标标记）===
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(100, 200, 255))
+        painter.drawEllipse(QPointF(cx_f, cy_f), 3, 3)
+
+        # === 颜色（角度→色相）===
+        a = self._angle_deg
+        if a < 2:
+            color = QColor(0, 230, 70)
+        elif a < 5:
+            t = (a - 2) / 3
+            color = QColor(int(255 * t), 255, int(70 - 50 * t))
+        elif a < 10:
+            t = (a - 5) / 5
+            color = QColor(255, int(255 - 90 * t), 20)
+        else:
+            color = QColor(255, 50, 50)
+
+        # === 偏移点（当前方向相对目标的位置）===
+        dot_max = radius * 0.75
+        dist = min(self._angle_deg / 30.0, 1.0) * dot_max
+        dx = self._dot_x * dist
+        dy = self._dot_y * dist
+        px = cx_f + dx
+        py = cy_f + dy
+
+        # 连线（从中心到偏移点）
+        painter.setPen(QPen(color, 2))
+        painter.drawLine(QPointF(cx_f, cy_f), QPointF(px, py))
+
+        # 偏移点（半透明外晕 + 实心点）
+        painter.setPen(Qt.NoPen)
+        glow = QColor(color.red(), color.green(), color.blue(), 60)
+        painter.setBrush(glow)
+        painter.drawEllipse(QPointF(px, py), 12, 12)
+
+        painter.setBrush(color)
+        painter.drawEllipse(QPointF(px, py), 6, 6)
+
+        # 外圈高亮
+        painter.setPen(QPen(color, 1.5))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QPointF(px, py), 9, 9)
+
+        # === 角度大数字 ===
+        painter.setPen(QColor(200, 210, 230))
+        fnt = QFont("Consolas", 14, QFont.Bold)
+        painter.setFont(fnt)
+        painter.drawText(QRect(int(cx_f - 50), int(cy_f + radius - 28),
+                               100, 28), Qt.AlignCenter, f"{self._angle_deg:.1f}°")
