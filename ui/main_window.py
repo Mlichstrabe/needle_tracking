@@ -6,6 +6,7 @@ import traceback
 import numpy as np
 from PyQt5.QtCore import Qt, QTimer, QThread
 from PyQt5.QtWidgets import (
+    QApplication,
     QMainWindow,
     QWidget,
     QVBoxLayout,
@@ -35,7 +36,6 @@ from ui.widgets.panels import (
     DeviceConnectionPanel,
     GuidanceArrowWidget,
     IMUDataPanel,
-    NeedleConfigPanel,
     PuncturePointPanel,
 )
 from ui.widgets.puncture_point_selector import PuncturePointSelector
@@ -48,12 +48,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("手术探针定位系统 - 穿刺训练模式")
-        self.setMinimumSize(1280, 820)
 
         self._init_core_components()
         self._init_ui()
         self._connect_signals()
         self._init_timers()
+        self._apply_window_geometry()
 
         self._current_quaternion = [1, 0, 0, 0]
         self._current_euler = [0, 0, 0]
@@ -100,16 +100,17 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._create_left_panel())
-        splitter.addWidget(self._create_center_panel())
-        splitter.addWidget(self._create_right_panel())
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
-        splitter.setSizes([300, 720, 360])
+        self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.addWidget(self._create_left_panel())
+        self._splitter.addWidget(self._create_center_panel())
+        self._splitter.addWidget(self._create_right_panel())
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setStretchFactor(2, 0)
+        self._splitter.setCollapsible(0, False)
+        self._splitter.setCollapsible(2, False)
 
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(self._splitter)
 
     def _create_center_panel(self):
         panel = QWidget()
@@ -130,8 +131,20 @@ class MainWindow(QMainWindow):
             QFrame { background: #12121f; border-radius: 8px; }
             """
         )
+        panel.setMinimumWidth(220)
+        panel.setMaximumWidth(300)
 
-        layout = QVBoxLayout(panel)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { width: 6px; }"
+        )
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setSpacing(10)
         layout.setContentsMargins(8, 8, 8, 8)
 
@@ -141,13 +154,15 @@ class MainWindow(QMainWindow):
         self.connection_panel = DeviceConnectionPanel()
         layout.addWidget(self.connection_panel)
 
-        self.needle_panel = NeedleConfigPanel()
-        layout.addWidget(self.needle_panel)
-
         self.imu_panel = IMUDataPanel()
         layout.addWidget(self.imu_panel)
 
         layout.addStretch()
+        scroll.setWidget(content)
+
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
         return panel
 
     def _create_right_panel(self):
@@ -189,10 +204,51 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         scroll.setWidget(content)
 
+        panel.setMinimumWidth(260)
+        panel.setMaximumWidth(400)
+
         outer_layout = QVBoxLayout(panel)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(scroll)
         return panel
+
+    def _apply_window_geometry(self):
+        """按当前屏幕可用区域设置窗口大小，避免超出显示器导致面板被裁切。"""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.setMinimumSize(960, 640)
+            self.resize(1100, 720)
+            return
+
+        avail = screen.availableGeometry()
+        margin = 24
+        max_w = max(800, avail.width() - margin)
+        max_h = max(560, avail.height() - margin)
+
+        min_w = min(960, max_w)
+        min_h = min(640, max_h)
+        self.setMinimumSize(min_w, min_h)
+
+        target_w = int(min(max_w, max(min_w, avail.width() * 0.88)))
+        target_h = int(min(max_h, max(min_h, avail.height() * 0.88)))
+        self.resize(target_w, target_h)
+
+        frame = self.frameGeometry()
+        frame.moveCenter(avail.center())
+        self.move(frame.topLeft())
+
+        side_total = max(target_w - 80, 600)
+        self._splitter.setSizes([
+            int(side_total * 0.20),
+            int(side_total * 0.58),
+            int(side_total * 0.22),
+        ])
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, "_geometry_applied_on_show", False):
+            self._apply_window_geometry()
+            self._geometry_applied_on_show = True
 
     def _connect_signals(self):
         self.device_manager.data_received.connect(self._on_device_data)
@@ -203,11 +259,9 @@ class MainWindow(QMainWindow):
         self.connection_panel.connect_clicked.connect(self._on_serial_connect)
         self.connection_panel.disconnect_clicked.connect(self._on_serial_disconnect)
 
-        self.needle_panel.needle_length_changed.connect(self._on_needle_length_changed)
-        self.needle_panel.zero_position_clicked.connect(self._on_zero_position)
-        self.needle_panel.clear_trajectory_clicked.connect(self._on_clear_trajectory)
-        self.needle_panel.reset_view_clicked.connect(self._on_reset_view)
-        self.needle_panel.calibration_clicked.connect(self._on_calibration_requested)
+        self.imu_panel.clear_trajectory_clicked.connect(self._on_clear_trajectory)
+        self.imu_panel.reset_view_clicked.connect(self._on_reset_view)
+        self.connection_panel.calibration_clicked.connect(self._on_calibration_requested)
 
         self.sim_panel.simulation_started.connect(self._on_simulation_started)
         self.sim_panel.simulation_stopped.connect(self._on_simulation_stopped)
@@ -245,6 +299,10 @@ class MainWindow(QMainWindow):
         self.panel_update_timer.timeout.connect(self._update_panels)
         self.panel_update_timer.start()
 
+        self._data_frame_count = 0
+        self._fps_last_time = time.perf_counter()
+        self._display_fps = 0
+
     def _on_serial_connect(self, port, baudrate):
         if not self.device_manager.connect(port, baudrate):
             QMessageBox.warning(self, "连接失败", f"无法连接到 {port}")
@@ -258,7 +316,9 @@ class MainWindow(QMainWindow):
 
     def _on_connection_changed(self, connected):
         self.connection_panel.set_connected(connected)
-        self.imu_panel.set_status(connected)
+        self.imu_panel.set_status(connected, self._display_fps if connected else 0)
+        if not connected:
+            self._display_fps = 0
         print("✓ 串口已连接" if connected else "✓ 串口已断开")
 
     def _on_device_error(self, error_msg):
@@ -280,6 +340,13 @@ class MainWindow(QMainWindow):
             self._cached_tip_pos = tip_pos
             self._update_needle_direction_fast(quaternion)
             self.gl_widget.update_data(imu_pos, tip_pos)
+
+            self._data_frame_count += 1
+            now = time.perf_counter()
+            if now - self._fps_last_time >= 1.0:
+                self._display_fps = self._data_frame_count / (now - self._fps_last_time)
+                self._data_frame_count = 0
+                self._fps_last_time = now
 
         except Exception as e:
             print(f"✗ 数据处理错误: {e}")
@@ -313,10 +380,6 @@ class MainWindow(QMainWindow):
         self._on_connection_changed(True)
         self._on_device_connected()
 
-    def _on_needle_length_changed(self, length):
-        self.needle_length = float(length)
-        print(f"针具长度: {length}mm")
-
     def _on_path_selected(self, path_index):
         if 0 <= path_index < len(self.preset_paths):
             path = self.preset_paths[path_index]
@@ -325,9 +388,6 @@ class MainWindow(QMainWindow):
             print(f"[Main] 已选择路径: {path['name']} -> {direction}")
         else:
             print(f"[Main] ⚠️ 无效的路径索引: {path_index}")
-
-    def _on_zero_position(self):
-        print("✓ 位置已归零")
 
     def _on_clear_trajectory(self):
         self.gl_widget.clear_trajectory()
@@ -367,15 +427,15 @@ class MainWindow(QMainWindow):
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(3000, self._finish_calibration)
 
-        self.needle_panel.btn_calibrate.setEnabled(False)
-        self.needle_panel.btn_calibrate.setText("校准中...")
+        self.connection_panel.btn_calibrate.setEnabled(False)
+        self.connection_panel.btn_calibrate.setText("校准中...")
         print("  保持传感器静止... (3秒)")
 
     def _finish_calibration(self):
         """完成校准"""
         self.device_manager.calibrate_magnetic_end()
-        self.needle_panel.btn_calibrate.setEnabled(True)
-        self.needle_panel.btn_calibrate.setText("校准传感器")
+        self.connection_panel.btn_calibrate.setEnabled(True)
+        self.connection_panel.btn_calibrate.setText("校准传感器")
         print("=== 传感器校准完成 ===")
         from PyQt5.QtWidgets import QMessageBox
         QMessageBox.information(self, "校准完成", "传感器校准已完成！\n\n• 陀螺仪零偏已记录\n• 磁力计校准已保存")
@@ -411,11 +471,8 @@ class MainWindow(QMainWindow):
         self.imu_panel.update_quaternion(self._current_quaternion)
         self.imu_panel.update_euler(self._current_euler)
 
-        imu_pos = self._cached_imu_pos
-        tip_pos = self._cached_tip_pos
-
-        self.imu_panel.update_position(imu_pos)
-        self.needle_panel.update_tip_position(tip_pos)
+        if self.device_manager.is_connected:
+            self.imu_panel.set_status(True, self._display_fps)
 
         inverted_direction = [
             -self._needle_direction[0],
@@ -470,11 +527,7 @@ class MainWindow(QMainWindow):
             self.sim_panel.update_alignment(angle, is_aligned)
 
         elif phase in ("locked", "advancing"):
-            status = self.puncture_session.update(self._current_quaternion, imu_pos)
-            self.sim_panel.update_deviation(
-                status["deviation_angle"],
-                status["suggestions"],
-            )
+            self.puncture_session.update(self._current_quaternion, imu_pos)
 
             elapsed = (time.perf_counter() - start) * 1000
             if elapsed > 20:

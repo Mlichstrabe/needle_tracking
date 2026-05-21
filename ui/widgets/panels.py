@@ -10,107 +10,145 @@ from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPolygonF
 from PyQt5.QtCore import QRect, QPointF
 
 
+_IMU_CARD_STYLE = """
+    QFrame {
+        background: #16162a;
+        border: 1px solid #2e2e48;
+        border-radius: 6px;
+    }
+"""
+
+
 class IMUDataPanel(QGroupBox):
-    """IMU数据显示面板"""
+    """IMU 数据面板（紧凑卡片布局，适配高 DPI）"""
+
+    reset_view_clicked = pyqtSignal()
+    clear_trajectory_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__("IMU 数据", parent)
         self._init_ui()
 
     def _init_ui(self):
-        """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
+        layout.setContentsMargins(4, 12, 4, 4)
 
-        title_color = "#81d4fa"
-        value_font = "font-family: Consolas, monospace; font-size: 13px;"
-        label_dim = "color: #888; font-size: 10px;"
+        # 顶部状态条
+        status_frame = QFrame()
+        status_frame.setStyleSheet(
+            "QFrame { background: #1a1a30; border-radius: 6px; padding: 2px; }"
+        )
+        status_row = QHBoxLayout(status_frame)
+        status_row.setContentsMargins(8, 6, 8, 6)
 
-        # 四元数显示
-        quat_group = QFrame()
-        quat_layout = QGridLayout(quat_group)
-        quat_layout.setSpacing(4)
+        self.status_dot = QLabel("●")
+        self.status_dot.setStyleSheet("color: #e57373; font-size: 11px;")
+        status_row.addWidget(self.status_dot)
 
-        quat_label = QLabel("四元数:")
-        quat_label.setStyleSheet(f"color: {title_color}; font-weight: bold; font-size: 13px;")
-        quat_layout.addWidget(quat_label, 0, 0, 1, 4)
-
-        self.quat_labels = []
-        quat_names = ['W', 'X', 'Y', 'Z']
-        for i, name in enumerate(quat_names):
-            name_label = QLabel(f"{name}:")
-            name_label.setStyleSheet(label_dim)
-            quat_layout.addWidget(name_label, 1, i)
-
-            value_label = QLabel("0.000")
-            value_label.setStyleSheet(f"color: #4fc3f7; {value_font}")
-            value_label.setMinimumWidth(60)
-            quat_layout.addWidget(value_label, 2, i)
-            self.quat_labels.append(value_label)
-
-        layout.addWidget(quat_group)
-
-        # 欧拉角显示
-        euler_group = QFrame()
-        euler_layout = QGridLayout(euler_group)
-        euler_layout.setSpacing(4)
-
-        euler_label = QLabel("欧拉角:")
-        euler_label.setStyleSheet(f"color: {title_color}; font-weight: bold; font-size: 13px;")
-        euler_layout.addWidget(euler_label, 0, 0, 1, 3)
-
-        self.euler_labels = []
-        euler_names = ['Roll', 'Pitch', 'Yaw']
-        for i, name in enumerate(euler_names):
-            name_label = QLabel(f"{name}:")
-            name_label.setStyleSheet(label_dim)
-            euler_layout.addWidget(name_label, 1, i)
-
-            value_label = QLabel("0.0°")
-            value_label.setStyleSheet(f"color: #4fc3f7; {value_font}")
-            value_label.setMinimumWidth(70)
-            euler_layout.addWidget(value_label, 2, i)
-            self.euler_labels.append(value_label)
-
-        layout.addWidget(euler_group)
-
-        # 位置显示
-        pos_group = QFrame()
-        pos_layout = QGridLayout(pos_group)
-        pos_layout.setSpacing(4)
-
-        pos_label = QLabel("位置 (mm):")
-        pos_label.setStyleSheet(f"color: {title_color}; font-weight: bold; font-size: 13px;")
-        pos_layout.addWidget(pos_label, 0, 0, 1, 3)
-
-        self.pos_labels = []
-        pos_names = ['X', 'Y', 'Z']
-        for i, name in enumerate(pos_names):
-            name_label = QLabel(f"{name}:")
-            name_label.setStyleSheet(label_dim)
-            pos_layout.addWidget(name_label, 1, i)
-
-            value_label = QLabel("0.0")
-            value_label.setStyleSheet(f"color: #4fc3f7; {value_font}")
-            value_label.setMinimumWidth(70)
-            pos_layout.addWidget(value_label, 2, i)
-            self.pos_labels.append(value_label)
-
-        layout.addWidget(pos_group)
-
-        # 连接状态
-        status_layout = QHBoxLayout()
-        status_layout.addWidget(QLabel("状态:"))
         self.status_label = QLabel("未连接")
-        self.status_label.setStyleSheet("color: #f44336;")
-        status_layout.addWidget(self.status_label)
-        status_layout.addStretch()
+        self.status_label.setStyleSheet("color: #cfd8dc; font-size: 11px; font-weight: bold;")
+        status_row.addWidget(self.status_label)
+        status_row.addStretch()
 
-        self.fps_label = QLabel("0 Hz")
-        self.fps_label.setStyleSheet("color: #aaa;")
-        status_layout.addWidget(self.fps_label)
+        self.fps_label = QLabel("-- Hz")
+        self.fps_label.setStyleSheet(
+            "color: #78909c; font-size: 10px; font-family: Consolas, monospace;"
+        )
+        status_row.addWidget(self.fps_label)
+        layout.addWidget(status_frame)
 
-        layout.addLayout(status_layout)
+        # 欧拉角（主读数）
+        layout.addWidget(self._build_metric_card(
+            "欧拉角",
+            ["Roll", "Pitch", "Yaw"],
+            "euler_labels",
+            suffix="°",
+            value_style="color: #4dd0e1; font-size: 15px; font-weight: bold;"
+                     "font-family: Consolas, monospace;",
+        ))
+
+        # 四元数（次要，单行紧凑）
+        quat_card = QFrame()
+        quat_card.setStyleSheet(_IMU_CARD_STYLE)
+        quat_outer = QVBoxLayout(quat_card)
+        quat_outer.setContentsMargins(8, 6, 8, 6)
+        quat_outer.setSpacing(4)
+        quat_title = QLabel("四元数")
+        quat_title.setStyleSheet("color: #81d4fa; font-size: 10px; font-weight: bold;")
+        quat_outer.addWidget(quat_title)
+
+        quat_row = QHBoxLayout()
+        quat_row.setSpacing(6)
+        self.quat_labels = []
+        for name in ("W", "X", "Y", "Z"):
+            cell = QVBoxLayout()
+            cell.setSpacing(0)
+            n = QLabel(name)
+            n.setStyleSheet("color: #607d8b; font-size: 9px;")
+            n.setAlignment(Qt.AlignCenter)
+            v = QLabel("0.000")
+            v.setStyleSheet(
+                "color: #90caf9; font-size: 11px; font-family: Consolas, monospace;"
+            )
+            v.setAlignment(Qt.AlignCenter)
+            cell.addWidget(n)
+            cell.addWidget(v)
+            quat_row.addLayout(cell)
+            self.quat_labels.append(v)
+        quat_outer.addLayout(quat_row)
+        layout.addWidget(quat_card)
+
+        # 视图快捷操作
+        tools = QHBoxLayout()
+        tools.setSpacing(6)
+        btn_style = (
+            "QPushButton { font-size: 10px; padding: 5px 8px; "
+            "background: #252545; border: 1px solid #3a3a5a; border-radius: 4px; }"
+            "QPushButton:hover { background: #32325a; }"
+        )
+        self.btn_reset_view = QPushButton("重置视角")
+        self.btn_reset_view.setStyleSheet(btn_style)
+        self.btn_reset_view.setToolTip("重置 3D 相机")
+        self.btn_reset_view.clicked.connect(self.reset_view_clicked.emit)
+        tools.addWidget(self.btn_reset_view)
+
+        self.btn_clear = QPushButton("清除轨迹")
+        self.btn_clear.setStyleSheet(btn_style)
+        self.btn_clear.setToolTip("清除 3D 轨迹线")
+        self.btn_clear.clicked.connect(self.clear_trajectory_clicked.emit)
+        tools.addWidget(self.btn_clear)
+        layout.addLayout(tools)
+
+    def _build_metric_card(self, title, names, attr_name, suffix, value_style):
+        card = QFrame()
+        card.setStyleSheet(_IMU_CARD_STYLE)
+        outer = QVBoxLayout(card)
+        outer.setContentsMargins(8, 6, 8, 6)
+        outer.setSpacing(4)
+
+        t = QLabel(title)
+        t.setStyleSheet("color: #81d4fa; font-size: 10px; font-weight: bold;")
+        outer.addWidget(t)
+
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        labels = []
+        for i, name in enumerate(names):
+            n = QLabel(name)
+            n.setStyleSheet("color: #607d8b; font-size: 9px;")
+            n.setAlignment(Qt.AlignCenter)
+            grid.addWidget(n, 0, i)
+
+            val = QLabel(f"0{suffix}")
+            val.setStyleSheet(value_style)
+            val.setAlignment(Qt.AlignCenter)
+            grid.addWidget(val, 1, i)
+            labels.append(val)
+
+        setattr(self, attr_name, labels)
+        outer.addLayout(grid)
+        return card
 
     def update_quaternion(self, quaternion):
         """更新四元数显示
@@ -123,186 +161,36 @@ class IMUDataPanel(QGroupBox):
                 self.quat_labels[i].setText(f"{val:.3f}")
 
     def update_euler(self, euler):
-        """更新欧拉角显示
-
-        Args:
-            euler: [roll, pitch, yaw] 欧拉角（度）
-        """
         if len(euler) >= 3:
             for i, val in enumerate(euler[:3]):
                 self.euler_labels[i].setText(f"{val:.1f}°")
 
-    def update_position(self, position):
-        """更新位置显示
-
-        Args:
-            position: [x, y, z] 位置（mm）
-        """
-        if len(position) >= 3:
-            for i, val in enumerate(position[:3]):
-                self.pos_labels[i].setText(f"{val:.1f}")
-
     def set_status(self, connected, fps=0):
-        """设置连接状态
-
-        Args:
-            connected: 是否已连接
-            fps: 数据刷新率
-        """
         if connected:
+            self.status_dot.setStyleSheet("color: #66bb6a; font-size: 11px;")
             self.status_label.setText("已连接")
-            self.status_label.setStyleSheet("color: #4caf50;")
+            self.status_label.setStyleSheet(
+                "color: #a5d6a7; font-size: 11px; font-weight: bold;"
+            )
         else:
+            self.status_dot.setStyleSheet("color: #e57373; font-size: 11px;")
             self.status_label.setText("未连接")
-            self.status_label.setStyleSheet("color: #f44336;")
+            self.status_label.setStyleSheet(
+                "color: #cfd8dc; font-size: 11px; font-weight: bold;"
+            )
 
-        self.fps_label.setText(f"{fps} Hz")
-
-
-class NeedleConfigPanel(QGroupBox):
-    """针具配置面板"""
-
-    # 原有信号
-    needle_length_changed = pyqtSignal(float)
-    zero_position_clicked = pyqtSignal()
-    clear_trajectory_clicked = pyqtSignal()
-    reset_view_clicked = pyqtSignal()
-
-    #  新增：校准信号
-    calibration_clicked = pyqtSignal()
-
-
-    def __init__(self, parent=None):
-        super().__init__("针具配置", parent)
-        self._init_ui()
-        self._connect_signals()
-
-    def _init_ui(self):
-        """初始化UI"""
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-
-        # 仅保留QSlider定制（全局QSS不包含此项）
-        self.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: 1px solid #4a4a6a;
-                height: 6px;
-                background: #2a2a4a;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #81d4fa;
-                border: 1px solid #5c5c7c;
-                width: 14px;
-                margin: -4px 0;
-                border-radius: 7px;
-            }
-        """)
-
-        # 针具长度设置
-        length_layout = QHBoxLayout()
-        length_layout.addWidget(QLabel("针具长度:"))
-
-        self.length_spinbox = QDoubleSpinBox()
-        self.length_spinbox.setRange(10, 300)
-        self.length_spinbox.setValue(162)
-        self.length_spinbox.setSuffix(" mm")
-        self.length_spinbox.setSingleStep(5)
-        self.length_spinbox.setMinimumWidth(100)
-        length_layout.addWidget(self.length_spinbox)
-
-        length_layout.addStretch()
-        layout.addLayout(length_layout)
-
-        # 快捷按钮
-        btn_layout = QGridLayout()
-
-        self.btn_zero = QPushButton("位置归零")
-        self.btn_zero.setToolTip("将当前位置设为原点")
-        btn_layout.addWidget(self.btn_zero, 0, 0)
-
-        self.btn_clear = QPushButton("清除轨迹")
-        self.btn_clear.setToolTip("清除3D视图中的轨迹")
-        btn_layout.addWidget(self.btn_clear, 0, 1)
-
-        self.btn_reset_view = QPushButton("重置视角")
-        self.btn_reset_view.setToolTip("重置3D视图相机位置")
-        btn_layout.addWidget(self.btn_reset_view, 1, 0)
-
-        # 预留按钮位置
-        self.btn_calibrate = QPushButton("校准传感器")
-        self.btn_calibrate.setToolTip("启动IMU校准：保持静止3秒完成陀螺仪零偏校准 + 磁力计校准")
-        btn_layout.addWidget(self.btn_calibrate, 1, 1)
-
-        layout.addLayout(btn_layout)
-
-        # 当前针尖位置显示
-        tip_layout = QGridLayout()
-        tip_label = QLabel("针尖位置:")
-        tip_label.setStyleSheet("color: #81d4fa;")
-        tip_layout.addWidget(tip_label, 0, 0, 1, 3)
-
-        self.tip_labels = []
-        for i, name in enumerate(['X', 'Y', 'Z']):
-            name_label = QLabel(f"{name}:")
-            name_label.setStyleSheet("color: #aaa;")
-            tip_layout.addWidget(name_label, 1, i)
-
-            value_label = QLabel("0.0")
-            value_label.setStyleSheet("color: #ff9800; font-family: Consolas;")
-            tip_layout.addWidget(value_label, 2, i)
-            self.tip_labels.append(value_label)
-
-        layout.addLayout(tip_layout)
-
-
-        layout.addStretch()
-
-    def _connect_signals(self):
-        """连接内部信号"""
-        # 原有信号
-        self.length_spinbox.valueChanged.connect(
-            lambda v: self.needle_length_changed.emit(v)
-        )
-        self.btn_zero.clicked.connect(self.zero_position_clicked.emit)
-        self.btn_clear.clicked.connect(self.clear_trajectory_clicked.emit)
-        self.btn_reset_view.clicked.connect(self.reset_view_clicked.emit)
-        self.btn_calibrate.clicked.connect(self.calibration_clicked.emit)
-
-
-    def get_needle_length(self):
-        """获取当前针具长度
-
-        Returns:
-            float: 针具长度（mm）
-        """
-        return self.length_spinbox.value()
-
-    def set_needle_length(self, length):
-        """设置针具长度
-
-        Args:
-            length: 针具长度（mm）
-        """
-        self.length_spinbox.setValue(length)
-
-    def update_tip_position(self, position):
-        """更新针尖位置显示
-
-        Args:
-            position: [x, y, z] 针尖位置（mm）
-        """
-        if len(position) >= 3:
-            for i, val in enumerate(position[:3]):
-                self.tip_labels[i].setText(f"{val:.1f}")
+        if fps > 0:
+            self.fps_label.setText(f"{fps:.0f} Hz")
+        else:
+            self.fps_label.setText("-- Hz")
 
 
 class DeviceConnectionPanel(QGroupBox):
     """设备连接面板"""
 
-    # 信号定义
-    connect_clicked = pyqtSignal(str, int)  # port, baudrate
+    connect_clicked = pyqtSignal(str, int)
     disconnect_clicked = pyqtSignal()
+    calibration_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__("设备连接", parent)
@@ -371,6 +259,17 @@ class DeviceConnectionPanel(QGroupBox):
         btn_layout.addWidget(self.btn_disconnect)
 
         layout.addLayout(btn_layout)
+
+        self.btn_calibrate = QPushButton("校准传感器")
+        self.btn_calibrate.setToolTip("静止约 3 秒完成陀螺仪零偏与磁力计校准")
+        self.btn_calibrate.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 6px; "
+            "background: #2a3a5a; border: 1px solid #4a5a7a; border-radius: 4px; }"
+            "QPushButton:hover { background: #354868; }"
+            "QPushButton:disabled { color: #666; background: #1a1a2a; }"
+        )
+        self.btn_calibrate.clicked.connect(self.calibration_clicked.emit)
+        layout.addWidget(self.btn_calibrate)
 
         # 初始扫描串口
         self._refresh_ports()
@@ -797,9 +696,9 @@ class GuidanceArrowWidget(QWidget):
         self._dot_x = 0.0
         self._dot_y = 0.0
         self._visible = False
-        self.setMinimumSize(140, 140)
-        self.setMaximumSize(260, 260)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumSize(100, 100)
+        self.setMaximumSize(180, 180)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     def set_guidance(self, correction_3d, angle_deg):
         """设置引导方向"""

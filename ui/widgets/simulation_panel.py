@@ -122,109 +122,6 @@ class OrientationLockWidget(QGroupBox):
         self._toggle_lock()  # 更新UI状态
 
 
-class DeviationDisplay(QFrame):
-    """偏差显示面板（复用并增强 AngleIndicatorPanel）"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet("background: #1a1a2e; border-radius: 6px; padding: 8px;")
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(6)
-
-        # ====== 标题 ======
-        title = QLabel("📊 角度偏差监控")
-        title.setStyleSheet("color: #5af; font-weight: bold; font-size: 11px;")
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
-
-        # ====== 总偏差显示 ======
-        self.total_label = QLabel("总偏差: --")
-        self.total_label.setStyleSheet(
-            "color: #fff; font-size: 14px; font-weight: bold;"
-        )
-        self.total_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.total_label)
-
-        # ====== 分项偏差 ======
-        self.pitch_label = QLabel("俯仰偏差: --")
-        self.yaw_label = QLabel("偏航偏差: --")
-
-        for label in [self.pitch_label, self.yaw_label]:
-            label.setStyleSheet("color: #aaa; font-size: 10px;")
-            layout.addWidget(label)
-
-        layout.addStretch()
-
-        # ====== 调整建议 ======
-        self.hint_label = QLabel("")
-        self.hint_label.setStyleSheet(
-            "color: #5af; font-size: 10px; background: #222; "
-            "padding: 6px; border-radius: 4px;"
-        )
-        self.hint_label.setWordWrap(True)
-        self.hint_label.setAlignment(Qt.AlignLeft)
-        layout.addWidget(self.hint_label)
-
-    def update_deviation(self, total, pitch_dev, yaw_dev):
-        """更新偏差显示
-
-        Args:
-            total: 总偏差角度（度）
-            pitch_dev: 俯仰偏差（度，正=需向下调整）
-            yaw_dev: 偏航偏差（度，正=需向右调整）
-        """
-        # ====== 总偏差 ======
-        if total < 3:
-            color = "#5f5"
-            status = "✓ 优秀"
-        elif total < 8:
-            color = "#ff5"
-            status = "△ 良好"
-        else:
-            color = "#f55"
-            status = "✗ 需调整"
-
-        self.total_label.setText(f"总偏差: {total:.1f}° {status}")
-        self.total_label.setStyleSheet(
-            f"color: {color}; font-size: 14px; font-weight: bold;"
-        )
-
-        # ====== 分项偏差 ======
-        self._update_axis_label(self.pitch_label, "俯仰", pitch_dev)
-        self._update_axis_label(self.yaw_label, "偏航", yaw_dev)
-
-        # ====== 调整建议 ======
-        hints = []
-        if abs(pitch_dev) > 2:
-            direction = "向下" if pitch_dev > 0 else "向上"
-            hints.append(f"• {direction}调整 {abs(pitch_dev):.1f}°")
-
-        if abs(yaw_dev) > 2:
-            direction = "向右" if yaw_dev > 0 else "向左"
-            hints.append(f"• {direction}调整 {abs(yaw_dev):.1f}°")
-
-        if hints:
-            self.hint_label.setText("🎯 调整建议:\n" + "\n".join(hints))
-        else:
-            self.hint_label.setText("✓ 角度已对齐，可以开始穿刺")
-
-    def _update_axis_label(self, label, name, deviation):
-        """更新单个轴标签"""
-        if abs(deviation) < 2:
-            color = "#5f5"
-            symbol = "✓"
-        elif abs(deviation) < 5:
-            color = "#ff5"
-            symbol = "△"
-        else:
-            color = "#f55"
-            symbol = "✗"
-
-        label.setText(f"{name}偏差: {deviation:+.1f}° {symbol}")
-        label.setStyleSheet(f"color: {color}; font-size: 10px;")
-
-
 class SimulationPanel(QFrame):
     """穿刺模拟主面板（重构版）"""
 
@@ -293,10 +190,6 @@ class SimulationPanel(QFrame):
         self.lock_widget.lock_toggled.connect(self._on_lock_toggled)
         layout.addWidget(self.lock_widget)
 
-        # ====== 偏差显示 ======
-        self.deviation_display = DeviationDisplay()
-        layout.addWidget(self.deviation_display)
-
         layout.addStretch()
 
     def _toggle_simulation(self):
@@ -359,50 +252,3 @@ class SimulationPanel(QFrame):
     def update_current_direction(self, direction):
         """更新当前针体方向（由主窗口调用）"""
         self.current_needle_direction = np.array(direction)
-
-        if not self.is_simulation_active or self.current_target_direction is None:
-            return
-
-        # ====== 计算偏差 ======
-        total, pitch, yaw = self._calculate_deviation(
-            self.current_needle_direction,
-            self.current_target_direction
-        )
-
-        # 更新显示
-        self.deviation_display.update_deviation(total, pitch, yaw)
-
-    def _calculate_deviation(self, current, target):
-        """计算偏差角度
-
-        Returns:
-            (total, pitch_dev, yaw_dev): 总偏差、俯仰偏差、偏航偏差
-        """
-        # ====== 总偏差（三维夹角） ======
-        cos_angle = np.dot(current, target)
-        cos_angle = np.clip(cos_angle, -1, 1)
-        total = np.degrees(np.arccos(cos_angle))
-
-        # ====== 俯仰偏差 ======
-        cur_pitch = np.degrees(np.arctan2(
-            current[2],
-            np.sqrt(current[0]**2 + current[1]**2)
-        ))
-        tgt_pitch = np.degrees(np.arctan2(
-            target[2],
-            np.sqrt(target[0]**2 + target[1]**2)
-        ))
-        pitch_dev = cur_pitch - tgt_pitch
-
-        # ====== 偏航偏差 ======
-        cur_yaw = np.degrees(np.arctan2(current[1], current[0]))
-        tgt_yaw = np.degrees(np.arctan2(target[1], target[0]))
-        yaw_dev = cur_yaw - tgt_yaw
-
-        # 归一化到 -180~180
-        while yaw_dev > 180:
-            yaw_dev -= 360
-        while yaw_dev < -180:
-            yaw_dev += 360
-
-        return total, pitch_dev, yaw_dev

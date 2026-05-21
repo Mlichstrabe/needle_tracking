@@ -19,11 +19,8 @@ class GLVisualizationWidget(QFrame):
 
         # 3D视图
         self.view = gl.GLViewWidget()
-        #  调整相机以适应CT模型（更大的距离和更低的仰角）
-        self.view.setCameraPosition(distance=350, elevation=20, azimuth=45)
-
-        # 性能优化设置
-        self.view.opts['distance'] = 250
+        self.view.setCameraPosition(distance=220, elevation=25, azimuth=45)
+        self.view.opts['distance'] = 220
         fmt = self.view.format()
         fmt.setSamples(0)
         self.view.setFormat(fmt)
@@ -257,9 +254,10 @@ class GLVisualizationWidget(QFrame):
                 float(center[2])
             )
 
-            distance_from_origin = np.linalg.norm(center)
-            if distance_from_origin > 100:
-                self.view.setCameraPosition(distance=distance_from_origin * 2.5)
+            span = float(np.linalg.norm(tip_array - imu_array))
+            distance = float(np.clip(max(span * 4.0, 120.0), 120.0, 350.0))
+            self.view.setCameraPosition(distance=distance)
+            self.view.opts['distance'] = distance
 
         self.imu_position = np.array(imu_pos, dtype=np.float32)
         self.tip_position = np.array(tip_pos, dtype=np.float32)
@@ -543,13 +541,13 @@ class GLVisualizationWidget(QFrame):
         """重置视角"""
         if clear_trajectory:
             self.view.opts['center'] = QVector3D(0, 0, 0)
-            self.view.setCameraPosition(distance=200, elevation=30, azimuth=45)
+            self.view.setCameraPosition(distance=200, elevation=25, azimuth=45)
             self.tip_positions = []
             self.trajectory_line.setData(pos=np.zeros((1, 3)))
             if hasattr(self, '_camera_adjusted'):
                 delattr(self, '_camera_adjusted')
         else:
-            self.view.setCameraPosition(distance=250, elevation=30, azimuth=45)
+            self.view.setCameraPosition(distance=220, elevation=25, azimuth=45)
 
     @property
     def trajectory_count(self):
@@ -599,7 +597,23 @@ class GLVisualizationWidget(QFrame):
             )
 
     def reset_camera(self):
-        self.view.setCameraPosition(distance=250, elevation=30, azimuth=45)
+        self.view.setCameraPosition(distance=220, elevation=25, azimuth=45)
+
+    def fit_view_to_center(self, center, extent=None):
+        """按模型包围盒自动设置相机，保证完整看到头部模型。"""
+        c = np.asarray(center, dtype=float).flatten()[:3]
+        self.view.opts['center'] = QVector3D(float(c[0]), float(c[1]), float(c[2]))
+
+        if extent is not None:
+            ext = np.asarray(extent, dtype=float).flatten()[:3]
+            radius = float(np.linalg.norm(ext) / 2.0)
+        else:
+            radius = 100.0
+
+        distance = float(np.clip(radius * 2.2, 160.0, 420.0))
+        self.view.setCameraPosition(distance=distance, elevation=22, azimuth=45)
+        self.view.opts['distance'] = distance
+        self._camera_adjusted = True
 
     def load_head_model(self, vertices, faces):
         """加载头部模型并添加到视图"""
@@ -624,8 +638,14 @@ class GLVisualizationWidget(QFrame):
 
         print(f"[GL] 头部模型已渲染: {len(vertices)} 顶点")
 
-        # 4. 自动调整视角看向模型
-        #self.view.setCameraPosition(distance=300)
+        verts = np.asarray(vertices, dtype=float)
+        if len(verts) > 0:
+            mn = verts.min(axis=0)
+            mx = verts.max(axis=0)
+            center = (mn + mx) / 2.0
+            extent = mx - mn
+            self.fit_view_to_center(center, extent)
+
         self.update()
 
     def clear_head_model(self):
