@@ -797,8 +797,9 @@ class GuidanceArrowWidget(QWidget):
         self._dot_x = 0.0
         self._dot_y = 0.0
         self._visible = False
-        self.setMinimumSize(90, 90)
-        self.setMaximumSize(200, 200)
+        self.setMinimumSize(140, 140)
+        self.setMaximumSize(260, 260)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def set_guidance(self, correction_3d, angle_deg):
         """设置引导方向"""

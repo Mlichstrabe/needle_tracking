@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QSplitter,
     QFrame,
     QMessageBox,
+    QLabel,
     QSizePolicy,
     QScrollArea,
 )
@@ -37,7 +38,6 @@ from ui.widgets.panels import (
     NeedleConfigPanel,
     PuncturePointPanel,
 )
-from ui.widgets.projection_views import ProjectionPanel
 from ui.widgets.puncture_point_selector import PuncturePointSelector
 from ui.widgets.simulation_panel import SimulationPanel
 
@@ -48,7 +48,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("手术探针定位系统 - 穿刺训练模式")
-        self.setMinimumSize(1400, 900)
+        self.setMinimumSize(1280, 820)
 
         self._init_core_components()
         self._init_ui()
@@ -104,7 +104,10 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._create_left_panel())
         splitter.addWidget(self._create_center_panel())
         splitter.addWidget(self._create_right_panel())
-        splitter.setSizes([280, 800, 320])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([300, 720, 360])
 
         main_layout.addWidget(splitter)
 
@@ -112,15 +115,11 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(0)
 
         self.gl_widget = GLVisualizationWidget()
         self.gl_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self.gl_widget, stretch=3)
-
-        self.projection_panel = ProjectionPanel()
-        self.projection_panel.setFixedHeight(150)
-        layout.addWidget(self.projection_panel, stretch=0)
+        layout.addWidget(self.gl_widget)
 
         return panel
 
@@ -136,17 +135,17 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         layout.setContentsMargins(8, 8, 8, 8)
 
+        self.ct_panel = CTModelPanel()
+        layout.addWidget(self.ct_panel)
+
         self.connection_panel = DeviceConnectionPanel()
         layout.addWidget(self.connection_panel)
-
-        self.imu_panel = IMUDataPanel()
-        layout.addWidget(self.imu_panel)
 
         self.needle_panel = NeedleConfigPanel()
         layout.addWidget(self.needle_panel)
 
-        self.ct_panel = CTModelPanel()
-        layout.addWidget(self.ct_panel)
+        self.imu_panel = IMUDataPanel()
+        layout.addWidget(self.imu_panel)
 
         layout.addStretch()
         return panel
@@ -168,16 +167,21 @@ class MainWindow(QMainWindow):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
         layout.setContentsMargins(8, 8, 8, 8)
+
+        guide_title = QLabel("对准引导")
+        guide_title.setStyleSheet(
+            "color: #81d4fa; font-size: 13px; font-weight: bold; padding: 2px 0;"
+        )
+        layout.addWidget(guide_title)
+
+        self.guidance_widget = GuidanceArrowWidget()
+        layout.addWidget(self.guidance_widget, alignment=Qt.AlignHCenter)
 
         self.puncture_panel = PuncturePointPanel()
         self.puncture_panel.setVisible(False)
         layout.addWidget(self.puncture_panel)
-
-        # 2D方向指示器（轻量罗盘箭头）
-        self.guidance_widget = GuidanceArrowWidget()
-        layout.addWidget(self.guidance_widget)
 
         self.sim_panel = SimulationPanel()
         layout.addWidget(self.sim_panel)
@@ -314,13 +318,10 @@ class MainWindow(QMainWindow):
         print(f"针具长度: {length}mm")
 
     def _on_path_selected(self, path_index):
-        self.projection_panel.clear_preset_path()
-        self.projection_panel.clear_target()
-
         if 0 <= path_index < len(self.preset_paths):
             path = self.preset_paths[path_index]
             direction = path["direction"]
-            self.projection_panel.set_preset_path(direction)
+            self.gl_widget.set_preset_path(direction)
             print(f"[Main] 已选择路径: {path['name']} -> {direction}")
         else:
             print(f"[Main] ⚠️ 无效的路径索引: {path_index}")
@@ -382,7 +383,7 @@ class MainWindow(QMainWindow):
     def _on_simulation_started(self):
         print("[Main] 穿刺路径引导模式已启动")
         default_path = [0, 0, 1]
-        self.projection_panel.set_preset_path(default_path)
+        self.gl_widget.set_preset_path(default_path)
 
         # 设置对齐目标方向并启动监控
         self.target_direction_world = np.array(default_path, dtype=float)
@@ -393,21 +394,17 @@ class MainWindow(QMainWindow):
     def _on_simulation_stopped(self):
         print("[Main] 穿刺路径引导模式已停止")
         self._stop_alignment_monitoring()
-        self.projection_panel.clear_preset_path()
-        self.projection_panel.clear_target()
         self.gl_widget.clear_path_lines()
 
     def _on_target_direction_changed(self, direction):
         print(f"[Main] 目标路径方向: {direction}")
         d = direction.tolist()
         self.target_direction_world = np.array(d, dtype=float)
-        self.projection_panel.set_preset_path(d)
         self.gl_widget.set_preset_path(d)
 
     def _on_orientation_locked(self, direction):
         print(f"[Main] 姿态已锁定: {direction}")
         d = np.asarray(direction).tolist()
-        self.projection_panel.set_target_direction(d)
         self.gl_widget.set_target_path(d)
 
     def _update_panels(self):
@@ -419,8 +416,6 @@ class MainWindow(QMainWindow):
 
         self.imu_panel.update_position(imu_pos)
         self.needle_panel.update_tip_position(tip_pos)
-
-        self.projection_panel.update_data(imu_pos, tip_pos, self._needle_direction)
 
         inverted_direction = [
             -self._needle_direction[0],
