@@ -32,13 +32,6 @@ class GLVisualizationWidget(QFrame):
         self.imu_position = np.array([0, 0, 0], dtype=float)
         self.tip_position = np.array([0, 0, 0], dtype=float)
 
-        # 模拟相关
-        self.simulated_tip_position = None
-        self.target_position = None
-        self.sphere_center = None
-        self.outer_radius = 40.0
-        self.entry_point = None
-
         # 虚线路径
         self.preset_path_direction = None
         self.target_path_direction = None
@@ -48,13 +41,11 @@ class GLVisualizationWidget(QFrame):
 
         # 性能优化计数器
         self._traj_counter = 0
-        self._guide_counter = 0
         self._gl_initialized = False
         self._camera_adjusted = False
         self._path_lines_dirty = True
         self._needle_update_confirmed = False
         self._traj_error_shown = False
-        self._guide_error_shown = False
         self._box_error_shown = False
         self._box_update_confirmed = False
         self._traj_threshold_sq = 16.0
@@ -172,47 +163,6 @@ class GLVisualizationWidget(QFrame):
 
         print("[GL] ✓ 穿刺点标记系统已初始化")
 
-    def _create_sphere_mesh(self, center, radius, color, rows=15, cols=15):
-        """创建球体网格"""
-        if not hasattr(self, '_sphere_cache'):
-            self._sphere_cache = {}
-
-        cache_key = (rows, cols)
-
-        if cache_key in self._sphere_cache:
-            verts_template, faces = self._sphere_cache[cache_key]
-            verts = verts_template * radius + center
-        else:
-            phi = np.linspace(0, np.pi, rows)
-            theta = np.linspace(0, 2 * np.pi, cols)
-            phi, theta = np.meshgrid(phi, theta)
-
-            x = np.sin(phi) * np.cos(theta)
-            y = np.sin(phi) * np.sin(theta)
-            z = np.cos(phi)
-
-            verts_template = np.stack([x.flatten(), y.flatten(), z.flatten()], axis=1)
-
-            faces = []
-            for i in range(rows - 1):
-                for j in range(cols - 1):
-                    idx = i * cols + j
-                    faces.append([idx, idx + 1, idx + cols])
-                    faces.append([idx + 1, idx + cols + 1, idx + cols])
-            faces = np.array(faces)
-
-            self._sphere_cache[cache_key] = (verts_template, faces)
-            verts = verts_template * radius + center
-
-        return gl.GLMeshItem(
-            vertexes=verts,
-            faces=faces,
-            smooth=False,
-            color=color,
-            shader='shaded',
-            glOptions='translucent'
-        )
-
     def update_data(self, imu_pos, tip_pos, max_points=500):
         """更新可视化数据"""
 
@@ -325,23 +275,6 @@ class GLVisualizationWidget(QFrame):
         # 更新虚线
         if self._path_lines_dirty:
             self._update_path_lines()
-
-        # 更新引导线
-        if hasattr(self, 'guide_line') and self.guide_line.visible():
-            self._guide_counter += 1
-            if self._guide_counter >= 10:
-                self._guide_counter = 0
-                if self.sphere_center is not None:
-                    try:
-                        guide_data = np.array([
-                            self.imu_position,
-                            self.sphere_center
-                        ], dtype=np.float32)
-                        self.guide_line.setData(pos=guide_data)
-                    except Exception as e:
-                        if not self._guide_error_shown:
-                            self._guide_error_shown = True
-                            print(f"[GL 错误] 引导线更新失败: {e}")
 
     def _update_path_lines(self):
         """更新路径虚线 - 使用贯穿式起点/终点"""
@@ -482,56 +415,6 @@ class GLVisualizationWidget(QFrame):
         """更新针尖方向"""
         self._needle_direction = direction if direction else [0, 0, 1]
 
-    def set_simulation_target(self, target_position, sphere_center, outer_radius=40.0):
-        """设置模拟目标"""
-        self.target_position = np.array(target_position, dtype=float)
-        self.sphere_center = np.array(sphere_center, dtype=float)
-        self.outer_radius = outer_radius
-        self.target_scatter.setData(pos=np.array([self.target_position]))
-        self._update_outer_sphere()
-        self.guide_line.setVisible(True)
-
-    def _update_outer_sphere(self):
-        """更新外层球体"""
-        if self.sphere_center is None:
-            if self.outer_sphere is not None:
-                self.view.removeItem(self.outer_sphere)
-                self.outer_sphere = None
-            return
-
-        if self.outer_sphere is not None:
-            self.view.removeItem(self.outer_sphere)
-
-        color = (0.2, 0.5, 1.0, self._sphere_opacity)
-        self.outer_sphere = self._create_sphere_mesh(
-            self.sphere_center,
-            self.outer_radius,
-            color
-        )
-        self.view.addItem(self.outer_sphere)
-
-    def set_sphere_opacity(self, opacity_level):
-        """设置球体透明度"""
-        if opacity_level == 0:
-            self._sphere_opacity = 0.1
-        elif opacity_level == 1:
-            self._sphere_opacity = 0.35
-        else:
-            self._sphere_opacity = 0.85
-        self._update_outer_sphere()
-
-    def clear_simulation(self):
-        """清除模拟显示"""
-        if self.outer_sphere is not None:
-            self.view.removeItem(self.outer_sphere)
-            self.outer_sphere = None
-
-        self.target_scatter.setVisible(False)
-        self.entry_scatter.setVisible(False)
-        self.guide_line.setVisible(False)
-        self.sim_tip_scatter.setVisible(False)
-        self.sim_trajectory_line.setVisible(False)
-
     def clear_trajectory(self):
         """清除轨迹"""
         self.tip_positions = []
@@ -548,53 +431,6 @@ class GLVisualizationWidget(QFrame):
                 delattr(self, '_camera_adjusted')
         else:
             self.view.setCameraPosition(distance=220, elevation=25, azimuth=45)
-
-    @property
-    def trajectory_count(self):
-        """获取轨迹点数量"""
-        return len(self.tip_positions)
-
-    # 兼容方法
-    def set_correction_arrows(self, *args, **kwargs):
-        pass
-
-    def set_target_visible(self, visible):
-        self.target_scatter.setVisible(visible)
-
-    def set_entry_point(self, entry_point):
-        if entry_point is None:
-            self.entry_scatter.setVisible(False)
-        else:
-            self.entry_point = np.array(entry_point, dtype=float)
-            self.entry_scatter.setData(pos=np.array([self.entry_point]))
-            self.entry_scatter.setVisible(True)
-
-    def update_simulated_tip(self, sim_tip_position, lock_position=None):
-        if sim_tip_position is None:
-            self.sim_tip_scatter.setVisible(False)
-            self.sim_trajectory_line.setVisible(False)
-        else:
-            self.sim_tip_scatter.setData(pos=np.array([sim_tip_position]))
-            self.sim_tip_scatter.setVisible(True)
-
-    def set_guide_line_visible(self, visible):
-        self.guide_line.setVisible(visible)
-
-    def show_success_effect(self):
-        if self.target_position is not None:
-            self.target_scatter.setData(
-                pos=np.array([self.target_position]),
-                color=(0, 1, 0, 1),
-                size=20
-            )
-
-    def show_failure_effect(self):
-        if self.target_position is not None:
-            self.target_scatter.setData(
-                pos=np.array([self.target_position]),
-                color=(1, 0, 0, 1),
-                size=20
-            )
 
     def reset_camera(self):
         self.view.setCameraPosition(distance=220, elevation=25, azimuth=45)

@@ -1,8 +1,8 @@
-"""左侧面板组件 - IMU数据显示和针具配置"""
+"""侧边栏 UI 组件"""
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QGroupBox, QSpinBox, QDoubleSpinBox,
-    QFrame, QSizePolicy, QSlider, QProgressBar, QCheckBox, QComboBox
+    QLabel, QPushButton, QGroupBox,
+    QFrame, QSizePolicy, QProgressBar, QCheckBox, QComboBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 import math

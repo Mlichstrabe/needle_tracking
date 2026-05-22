@@ -1,10 +1,9 @@
 """穿刺模拟面板 - 重构版（路径引导模式）"""
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QComboBox, QGroupBox, QFrame, QSlider
+    QWidget, QVBoxLayout, QLabel, QPushButton,
+    QGroupBox, QFrame,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
 import numpy as np
 
 
@@ -128,8 +127,7 @@ class SimulationPanel(QFrame):
     # ====== 信号定义 ======
     simulation_started = pyqtSignal()
     simulation_stopped = pyqtSignal()
-    target_direction_changed = pyqtSignal(np.ndarray)  # 目标方向改变
-    orientation_locked = pyqtSignal(np.ndarray)        # 姿态锁定
+    orientation_locked = pyqtSignal(np.ndarray)
 
     def __init__(self, parent=None):
         super().__init__(parent)

@@ -27,9 +27,6 @@ from core.imu_kinematics import (
     needle_axis_scene_normalized,
     tip_position_from_fixed,
 )
-from core.puncture_monitor import PunctureMonitor
-from core.puncture_session import PunctureSession
-from core.simulation_manager import SimulationManager
 from ui.widgets.gl_widget import GLVisualizationWidget
 from ui.widgets.panels import (
     CTModelPanel,
@@ -63,17 +60,7 @@ class MainWindow(QMainWindow):
         self._cached_imu_pos = np.zeros(3)
         self._cached_tip_pos = np.zeros(3)
 
-        # 直接使用IMU原始数据（依赖IMU自带滤波）
-        self._filter_mode = "normal"
-
         self.needle_length = 162.0
-
-        self.preset_paths = [
-            {"name": "路径1 - 沿Z轴", "direction": [0, 0, 1]},
-            {"name": "路径2 - 45°倾斜", "direction": [0.707, 0, 0.707]},
-            {"name": "路径3 - 水平", "direction": [1, 0, 0]},
-            {"name": "路径4 - 复杂角度", "direction": [0.577, 0.577, 0.577]},
-        ]
 
         self.puncture_selector = None
         self.puncture_point = None
@@ -87,9 +74,6 @@ class MainWindow(QMainWindow):
 
     def _init_core_components(self):
         self.device_manager = DeviceManager()
-        self.puncture_monitor = PunctureMonitor(threshold=3.0)
-        self.puncture_session = PunctureSession(self.puncture_monitor)
-        self.simulation_manager = SimulationManager()
         self.dicom_loader = DicomModelLoader()
 
     def _init_ui(self):
@@ -265,14 +249,7 @@ class MainWindow(QMainWindow):
 
         self.sim_panel.simulation_started.connect(self._on_simulation_started)
         self.sim_panel.simulation_stopped.connect(self._on_simulation_stopped)
-        self.sim_panel.target_direction_changed.connect(self._on_target_direction_changed)
         self.sim_panel.orientation_locked.connect(self._on_orientation_locked)
-
-        self.puncture_session.phase_changed.connect(self._on_phase_changed)
-        self.puncture_session.depth_changed.connect(self._on_depth_changed)
-        self.puncture_session.deviation_warning.connect(self._on_deviation_warning)
-        self.puncture_session.result_determined.connect(self._on_result_determined)
-        self.puncture_session.simulated_tip_moved.connect(self._on_simulated_tip_moved)
 
         self.ct_panel.load_clicked.connect(self._on_ct_load)
         self.ct_panel.clear_clicked.connect(self._on_ct_clear)
@@ -282,18 +259,10 @@ class MainWindow(QMainWindow):
         self.dicom_loader.loading_finished.connect(self._on_ct_loaded)
         self.dicom_loader.loading_failed.connect(self._on_ct_failed)
 
-        if hasattr(self.sim_panel, "path_selected"):
-            self.sim_panel.path_selected.connect(self._on_path_selected)
-
         self.puncture_panel.start_selection_clicked.connect(self._on_start_selection)
         self.puncture_panel.reselect_clicked.connect(self._on_reselect_puncture_point)
 
     def _init_timers(self):
-        self.update_timer = QTimer()
-        self.update_timer.setInterval(16)
-        self.update_timer.timeout.connect(self._on_update_tick)
-        self.update_timer.start()
-
         self.panel_update_timer = QTimer()
         self.panel_update_timer.setInterval(33)
         self.panel_update_timer.timeout.connect(self._update_panels)
@@ -380,15 +349,6 @@ class MainWindow(QMainWindow):
         self._on_connection_changed(True)
         self._on_device_connected()
 
-    def _on_path_selected(self, path_index):
-        if 0 <= path_index < len(self.preset_paths):
-            path = self.preset_paths[path_index]
-            direction = path["direction"]
-            self.gl_widget.set_preset_path(direction)
-            print(f"[Main] 已选择路径: {path['name']} -> {direction}")
-        else:
-            print(f"[Main] ⚠️ 无效的路径索引: {path_index}")
-
     def _on_clear_trajectory(self):
         self.gl_widget.clear_trajectory()
 
@@ -456,12 +416,6 @@ class MainWindow(QMainWindow):
         self._stop_alignment_monitoring()
         self.gl_widget.clear_path_lines()
 
-    def _on_target_direction_changed(self, direction):
-        print(f"[Main] 目标路径方向: {direction}")
-        d = direction.tolist()
-        self.target_direction_world = np.array(d, dtype=float)
-        self.gl_widget.set_preset_path(d)
-
     def _on_orientation_locked(self, direction):
         print(f"[Main] 姿态已锁定: {direction}")
         d = np.asarray(direction).tolist()
@@ -481,64 +435,10 @@ class MainWindow(QMainWindow):
         ]
         self.sim_panel.update_current_direction(inverted_direction)
 
-    def _on_phase_changed(self, phase):
-        self.sim_panel.set_phase(phase)
-
-        if phase == "aligning":
-            self.gl_widget.set_target_visible(False)
-        elif phase in ("completed", "failed"):
-            self.simulation_manager.reveal_target()
-            self.gl_widget.set_target_visible(True)
-            if phase == "completed":
-                self.gl_widget.show_success_effect()
-            else:
-                self.gl_widget.show_failure_effect()
-
-    def _on_depth_changed(self, current, target):
-        self.sim_panel.update_depth(current, target)
-
-    def _on_deviation_warning(self, angle, is_critical):
-        if is_critical:
-            print(f"⚠ 严重偏离: {angle:.1f}°")
-
-    def _on_result_determined(self, result, details):
-        self.sim_panel.show_result(result, details)
-        if result == "success":
-            print(f"✓ 穿刺成功！精度: {details.get('accuracy', 0):.1f}mm")
-        else:
-            print(f"✗ 穿刺失败: {details.get('reason', '未知')}")
-
-    def _on_simulated_tip_moved(self, sim_tip):
-        self.gl_widget.update_simulated_tip(sim_tip, self.puncture_session.lock_position)
-
-    def _on_update_tick(self):
-        start = time.perf_counter()
-        phase = self.puncture_session.phase
-
-        if phase == "idle":
-            return
-
-        imu_pos = self._cached_imu_pos
-
-        if phase == "aligning":
-            angle, is_aligned = self.puncture_session.check_alignment(
-                self._last_needle_direction, imu_pos
-            )
-            self.sim_panel.update_alignment(angle, is_aligned)
-
-        elif phase in ("locked", "advancing"):
-            self.puncture_session.update(self._current_quaternion, imu_pos)
-
-            elapsed = (time.perf_counter() - start) * 1000
-            if elapsed > 20:
-                print(f"⚠️ _on_update 耗时: {elapsed:.1f}ms")
-
     def closeEvent(self, event):
         self._stop_alignment_monitoring()
-        self.update_timer.stop()
         self.panel_update_timer.stop()
         self.device_manager.disconnect()
-        self.puncture_session.end()
         print("✓ 程序已退出")
         event.accept()
 
