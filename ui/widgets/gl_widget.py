@@ -12,10 +12,10 @@ class GLVisualizationWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameStyle(QFrame.StyledPanel)
-        self.setStyleSheet("background: #1a1a2e; border-radius: 8px;")
+        self.setStyleSheet("background: #05070a; border-radius: 6px;")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(2, 2, 2, 2)
 
         # 3D视图
         self.view = gl.GLViewWidget()

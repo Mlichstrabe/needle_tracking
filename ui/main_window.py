@@ -81,8 +81,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         main_layout = QHBoxLayout(central)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(0)
 
         self._splitter = QSplitter(Qt.Horizontal)
         self._splitter.addWidget(self._create_left_panel())
@@ -97,9 +97,10 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._splitter)
 
     def _create_center_panel(self):
-        panel = QWidget()
+        panel = QFrame()
+        panel.setObjectName("ViewportPanel")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(3, 3, 3, 3)
         layout.setSpacing(0)
 
         self.gl_widget = GLVisualizationWidget()
@@ -110,27 +111,19 @@ class MainWindow(QMainWindow):
 
     def _create_left_panel(self):
         panel = QFrame()
-        panel.setStyleSheet(
-            """
-            QFrame { background: #12121f; border-radius: 8px; }
-            """
-        )
-        panel.setMinimumWidth(220)
-        panel.setMaximumWidth(300)
+        panel.setObjectName("SidePanel")
+        panel.setMinimumWidth(260)
+        panel.setMaximumWidth(340)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { width: 6px; }"
-        )
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(10)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(12)
+        layout.setContentsMargins(10, 10, 10, 10)
 
         self.ct_panel = CTModelPanel()
         layout.addWidget(self.ct_panel)
@@ -151,28 +144,20 @@ class MainWindow(QMainWindow):
 
     def _create_right_panel(self):
         panel = QFrame()
-        panel.setStyleSheet(
-            """
-            QFrame { background: #12121f; border-radius: 8px; }
-            """
-        )
+        panel.setObjectName("SidePanel")
 
         # 滚动区域，防止内容被裁
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: transparent; }"
-                             "QScrollBar:vertical { width: 6px; }")
 
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setSpacing(12)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(10, 10, 10, 10)
 
         guide_title = QLabel("对准引导")
-        guide_title.setStyleSheet(
-            "color: #81d4fa; font-size: 13px; font-weight: bold; padding: 2px 0;"
-        )
+        guide_title.setStyleSheet("color: #70d6ff; font-size: 14px; font-weight: 700;")
         layout.addWidget(guide_title)
 
         self.guidance_widget = GuidanceArrowWidget()
@@ -188,8 +173,8 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         scroll.setWidget(content)
 
-        panel.setMinimumWidth(260)
-        panel.setMaximumWidth(400)
+        panel.setMinimumWidth(300)
+        panel.setMaximumWidth(430)
 
         outer_layout = QVBoxLayout(panel)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -223,8 +208,8 @@ class MainWindow(QMainWindow):
 
         side_total = max(target_w - 80, 600)
         self._splitter.setSizes([
-            int(side_total * 0.20),
-            int(side_total * 0.58),
+            int(side_total * 0.18),
+            int(side_total * 0.60),
             int(side_total * 0.22),
         ])
 

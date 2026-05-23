@@ -7,6 +7,11 @@ from PyQt5.QtCore import Qt, pyqtSignal
 import numpy as np
 
 
+def _set_button_variant(button, variant):
+    button.setProperty("variant", variant)
+    button.style().unpolish(button)
+    button.style().polish(button)
+
 
 class OrientationLockWidget(QGroupBox):
     """姿态锁定控件"""
@@ -18,16 +23,18 @@ class OrientationLockWidget(QGroupBox):
         self.setStyleSheet("""
             QGroupBox {
                 font-weight: bold;
-                border: 2px solid #444;
-                border-radius: 6px;
+                background: #151d2a;
+                border: 1px solid #2a3a50;
+                border-radius: 7px;
                 margin-top: 10px;
-                padding-top: 10px;
+                padding: 12px 8px 8px 8px;
             }
             QGroupBox::title {
-                color: #5af;
+                color: #70d6ff;
                 subcontrol-origin: margin;
                 left: 10px;
-                padding: 0 5px;
+                padding: 0 6px;
+                background: #111824;
             }
         """)
 
@@ -37,38 +44,22 @@ class OrientationLockWidget(QGroupBox):
         layout = QVBoxLayout(self)
 
         # ====== 锁定按钮 ======
-        self.lock_btn = QPushButton("🔒 锁定当前姿态")
+        self.lock_btn = QPushButton("锁定当前姿态")
         self.lock_btn.setShortcut(Qt.Key_Space)
-        self.lock_btn.setStyleSheet("""
-            QPushButton {
-                background: #2a5;
-                color: white;
-                font-weight: bold;
-                font-size: 12px;
-                padding: 8px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background: #3b6;
-            }
-            QPushButton:pressed {
-                background: #1a4;
-            }
-        """)
+        _set_button_variant(self.lock_btn, "primary")
         self.lock_btn.clicked.connect(self._toggle_lock)
         layout.addWidget(self.lock_btn)
 
         # ====== 状态显示 ======
         self.status_label = QLabel("当前状态: 未锁定")
-        self.status_label.setStyleSheet("color: #aaa; font-size: 10px;")
+        self.status_label.setStyleSheet("color: #8090a3; font-size: 11px;")
         layout.addWidget(self.status_label)
 
         # ====== 提示文字 ======
         hint = QLabel(
-            "💡 提示: 调整到满意的姿态后，\n"
-            "   点击按钮（或按空格键）锁定"
+            "调整到满意的姿态后，点击按钮（或按空格键）锁定。"
         )
-        hint.setStyleSheet("color: #888; font-size: 9px;")
+        hint.setStyleSheet("color: #8090a3; font-size: 10px; line-height: 140%;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -77,39 +68,15 @@ class OrientationLockWidget(QGroupBox):
         self.is_locked = not self.is_locked
 
         if self.is_locked:
-            self.lock_btn.setText("🔓 解除锁定")
-            self.lock_btn.setStyleSheet("""
-                QPushButton {
-                    background: #d55;
-                    color: white;
-                    font-weight: bold;
-                    font-size: 12px;
-                    padding: 8px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background: #e66;
-                }
-            """)
-            self.status_label.setText("当前状态: 已锁定 ✓")
-            self.status_label.setStyleSheet("color: #5f5; font-size: 10px;")
+            self.lock_btn.setText("解除锁定")
+            _set_button_variant(self.lock_btn, "danger")
+            self.status_label.setText("当前状态: 已锁定")
+            self.status_label.setStyleSheet("color: #58d68d; font-size: 11px; font-weight: 700;")
         else:
-            self.lock_btn.setText("🔒 锁定当前姿态")
-            self.lock_btn.setStyleSheet("""
-                QPushButton {
-                    background: #2a5;
-                    color: white;
-                    font-weight: bold;
-                    font-size: 12px;
-                    padding: 8px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background: #3b6;
-                }
-            """)
+            self.lock_btn.setText("锁定当前姿态")
+            _set_button_variant(self.lock_btn, "primary")
             self.status_label.setText("当前状态: 未锁定")
-            self.status_label.setStyleSheet("color: #aaa; font-size: 10px;")
+            self.status_label.setStyleSheet("color: #8090a3; font-size: 11px;")
             self.locked_direction = None
 
         self.lock_toggled.emit(self.is_locked)
@@ -134,9 +101,9 @@ class SimulationPanel(QFrame):
         self.setFrameStyle(QFrame.StyledPanel)
         self.setStyleSheet("""
             QFrame {
-                background: #12121a;
-                border: 1px solid #333;
-                border-radius: 6px;
+                background: #151d2a;
+                border: 1px solid #2a3a50;
+                border-radius: 7px;
             }
         """)
 
@@ -151,35 +118,20 @@ class SimulationPanel(QFrame):
     def _init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
 
         # ====== 标题 ======
-        title = QLabel("🎯 穿刺路径引导")
+        title = QLabel("穿刺路径引导")
         title.setStyleSheet(
-            "color: #5af; font-size: 14px; font-weight: bold;"
+            "color: #70d6ff; font-size: 13px; font-weight: bold;"
         )
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
         # ====== 模拟开关 ======
-        self.toggle_btn = QPushButton("▶ 启动引导模式")
-        self.toggle_btn.setStyleSheet("""
-            QPushButton {
-                background: #2a5;
-                color: white;
-                font-weight: bold;
-                font-size: 13px;
-                padding: 10px;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background: #3b6;
-            }
-            QPushButton:pressed {
-                background: #1a4;
-            }
-        """)
+        self.toggle_btn = QPushButton("启动引导模式")
+        _set_button_variant(self.toggle_btn, "primary")
         self.toggle_btn.clicked.connect(self._toggle_simulation)
         layout.addWidget(self.toggle_btn)
 
@@ -196,20 +148,8 @@ class SimulationPanel(QFrame):
 
         if self.is_simulation_active:
             # ====== 启动引导 ======
-            self.toggle_btn.setText("■ 停止引导模式")
-            self.toggle_btn.setStyleSheet("""
-                QPushButton {
-                    background: #d55;
-                    color: white;
-                    font-weight: bold;
-                    font-size: 13px;
-                    padding: 10px;
-                    border-radius: 6px;
-                }
-                QPushButton:hover {
-                    background: #e66;
-                }
-            """)
+            self.toggle_btn.setText("停止引导模式")
+            _set_button_variant(self.toggle_btn, "danger")
 
             #  简化：只发射启动信号
             self.simulation_started.emit()
@@ -217,20 +157,8 @@ class SimulationPanel(QFrame):
 
         else:
             # ====== 停止引导 ======
-            self.toggle_btn.setText("▶ 启动引导模式")
-            self.toggle_btn.setStyleSheet("""
-                QPushButton {
-                    background: #2a5;
-                    color: white;
-                    font-weight: bold;
-                    font-size: 13px;
-                    padding: 10px;
-                    border-radius: 6px;
-                }
-                QPushButton:hover {
-                    background: #3b6;
-                }
-            """)
+            self.toggle_btn.setText("启动引导模式")
+            _set_button_variant(self.toggle_btn, "primary")
 
             #  停止时解锁（如果已锁定）
             if self.lock_widget.is_locked:

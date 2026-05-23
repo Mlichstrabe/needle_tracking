@@ -12,11 +12,27 @@ from PyQt5.QtCore import QRect, QPointF
 
 _IMU_CARD_STYLE = """
     QFrame {
-        background: #16162a;
-        border: 1px solid #2e2e48;
+        background: #151f2d;
+        border: 1px solid #2a3a50;
         border-radius: 6px;
     }
 """
+
+_STATUS_CARD_STYLE = """
+    QFrame {
+        background: #101824;
+        border: 1px solid #26374d;
+        border-radius: 6px;
+    }
+"""
+
+_VALUE_FONT = "font-family: 'Cascadia Mono', 'Consolas', monospace;"
+
+
+def _set_button_variant(button, variant):
+    button.setProperty("variant", variant)
+    button.style().unpolish(button)
+    button.style().polish(button)
 
 
 class IMUDataPanel(QGroupBox):
@@ -31,16 +47,15 @@ class IMUDataPanel(QGroupBox):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(6)
-        layout.setContentsMargins(4, 12, 4, 4)
+        layout.setSpacing(9)
+        layout.setContentsMargins(6, 14, 6, 6)
+        layout.setContentsMargins(6, 14, 6, 6)
 
         # 顶部状态条
         status_frame = QFrame()
-        status_frame.setStyleSheet(
-            "QFrame { background: #1a1a30; border-radius: 6px; padding: 2px; }"
-        )
+        status_frame.setStyleSheet(_STATUS_CARD_STYLE)
         status_row = QHBoxLayout(status_frame)
-        status_row.setContentsMargins(8, 6, 8, 6)
+        status_row.setContentsMargins(10, 7, 10, 7)
 
         self.status_dot = QLabel("●")
         self.status_dot.setStyleSheet("color: #e57373; font-size: 11px;")
@@ -53,7 +68,7 @@ class IMUDataPanel(QGroupBox):
 
         self.fps_label = QLabel("-- Hz")
         self.fps_label.setStyleSheet(
-            "color: #78909c; font-size: 10px; font-family: Consolas, monospace;"
+            f"color: #8090a3; font-size: 10px; {_VALUE_FONT}"
         )
         status_row.addWidget(self.fps_label)
         layout.addWidget(status_frame)
@@ -64,8 +79,7 @@ class IMUDataPanel(QGroupBox):
             ["Roll", "Pitch", "Yaw"],
             "euler_labels",
             suffix="°",
-            value_style="color: #4dd0e1; font-size: 15px; font-weight: bold;"
-                     "font-family: Consolas, monospace;",
+            value_style=f"color: #45d7ff; font-size: 16px; font-weight: bold; {_VALUE_FONT}",
         ))
 
         # 四元数（次要，单行紧凑）
@@ -75,7 +89,7 @@ class IMUDataPanel(QGroupBox):
         quat_outer.setContentsMargins(8, 6, 8, 6)
         quat_outer.setSpacing(4)
         quat_title = QLabel("四元数")
-        quat_title.setStyleSheet("color: #81d4fa; font-size: 10px; font-weight: bold;")
+        quat_title.setStyleSheet("color: #70d6ff; font-size: 10px; font-weight: bold;")
         quat_outer.addWidget(quat_title)
 
         quat_row = QHBoxLayout()
@@ -85,11 +99,11 @@ class IMUDataPanel(QGroupBox):
             cell = QVBoxLayout()
             cell.setSpacing(0)
             n = QLabel(name)
-            n.setStyleSheet("color: #607d8b; font-size: 9px;")
+            n.setStyleSheet("color: #8090a3; font-size: 9px;")
             n.setAlignment(Qt.AlignCenter)
             v = QLabel("0.000")
             v.setStyleSheet(
-                "color: #90caf9; font-size: 11px; font-family: Consolas, monospace;"
+                f"color: #b7d8ff; font-size: 11px; {_VALUE_FONT}"
             )
             v.setAlignment(Qt.AlignCenter)
             cell.addWidget(n)
@@ -102,19 +116,14 @@ class IMUDataPanel(QGroupBox):
         # 视图快捷操作
         tools = QHBoxLayout()
         tools.setSpacing(6)
-        btn_style = (
-            "QPushButton { font-size: 10px; padding: 5px 8px; "
-            "background: #252545; border: 1px solid #3a3a5a; border-radius: 4px; }"
-            "QPushButton:hover { background: #32325a; }"
-        )
         self.btn_reset_view = QPushButton("重置视角")
-        self.btn_reset_view.setStyleSheet(btn_style)
+        _set_button_variant(self.btn_reset_view, "secondary")
         self.btn_reset_view.setToolTip("重置 3D 相机")
         self.btn_reset_view.clicked.connect(self.reset_view_clicked.emit)
         tools.addWidget(self.btn_reset_view)
 
         self.btn_clear = QPushButton("清除轨迹")
-        self.btn_clear.setStyleSheet(btn_style)
+        _set_button_variant(self.btn_clear, "secondary")
         self.btn_clear.setToolTip("清除 3D 轨迹线")
         self.btn_clear.clicked.connect(self.clear_trajectory_clicked.emit)
         tools.addWidget(self.btn_clear)
@@ -128,7 +137,7 @@ class IMUDataPanel(QGroupBox):
         outer.setSpacing(4)
 
         t = QLabel(title)
-        t.setStyleSheet("color: #81d4fa; font-size: 10px; font-weight: bold;")
+        t.setStyleSheet("color: #70d6ff; font-size: 10px; font-weight: bold;")
         outer.addWidget(t)
 
         grid = QGridLayout()
@@ -136,7 +145,7 @@ class IMUDataPanel(QGroupBox):
         labels = []
         for i, name in enumerate(names):
             n = QLabel(name)
-            n.setStyleSheet("color: #607d8b; font-size: 9px;")
+            n.setStyleSheet("color: #8090a3; font-size: 9px;")
             n.setAlignment(Qt.AlignCenter)
             grid.addWidget(n, 0, i)
 
@@ -206,10 +215,10 @@ class DeviceConnectionPanel(QGroupBox):
         status_layout = QHBoxLayout()
         status_layout.addWidget(QLabel("状态:"))
         self.status_indicator = QLabel("●")
-        self.status_indicator.setStyleSheet("color: #f44336; font-size: 20px;")
+        self.status_indicator.setStyleSheet("color: #ff6b6b; font-size: 15px;")
         status_layout.addWidget(self.status_indicator)
         self.status_text = QLabel("未连接")
-        self.status_text.setStyleSheet("color: #f44336;")
+        self.status_text.setStyleSheet("color: #ff6b6b; font-weight: 700;")
         status_layout.addWidget(self.status_text)
         status_layout.addStretch()
         layout.addLayout(status_layout)
@@ -232,42 +241,19 @@ class DeviceConnectionPanel(QGroupBox):
         # 连接/断开按钮
         btn_layout = QHBoxLayout()
         self.btn_connect = QPushButton("连接设备")
-        self.btn_connect.setStyleSheet("""
-            QPushButton {
-                background: #388e3c;
-            }
-            QPushButton:hover {
-                background: #43a047;
-            }
-        """)
+        _set_button_variant(self.btn_connect, "primary")
         btn_layout.addWidget(self.btn_connect)
 
         self.btn_disconnect = QPushButton("断开")
         self.btn_disconnect.setEnabled(False)
-        self.btn_disconnect.setStyleSheet("""
-            QPushButton {
-                background: #c62828;
-            }
-            QPushButton:hover {
-                background: #d32f2f;
-            }
-            QPushButton:disabled {
-                background: #1a1a2a;
-                color: #666;
-            }
-        """)
+        _set_button_variant(self.btn_disconnect, "danger")
         btn_layout.addWidget(self.btn_disconnect)
 
         layout.addLayout(btn_layout)
 
         self.btn_calibrate = QPushButton("校准传感器")
         self.btn_calibrate.setToolTip("静止约 3 秒完成陀螺仪零偏与磁力计校准")
-        self.btn_calibrate.setStyleSheet(
-            "QPushButton { font-size: 11px; padding: 6px; "
-            "background: #2a3a5a; border: 1px solid #4a5a7a; border-radius: 4px; }"
-            "QPushButton:hover { background: #354868; }"
-            "QPushButton:disabled { color: #666; background: #1a1a2a; }"
-        )
+        _set_button_variant(self.btn_calibrate, "secondary")
         self.btn_calibrate.clicked.connect(self.calibration_clicked.emit)
         layout.addWidget(self.btn_calibrate)
 
@@ -308,15 +294,15 @@ class DeviceConnectionPanel(QGroupBox):
             connected: 是否已连接
         """
         if connected:
-            self.status_indicator.setStyleSheet("color: #4caf50; font-size: 16px;")
+            self.status_indicator.setStyleSheet("color: #58d68d; font-size: 15px;")
             self.status_text.setText("已连接")
-            self.status_text.setStyleSheet("color: #4caf50;")
+            self.status_text.setStyleSheet("color: #58d68d; font-weight: 700;")
             self.btn_connect.setEnabled(False)
             self.btn_disconnect.setEnabled(True)
         else:
-            self.status_indicator.setStyleSheet("color: #f44336; font-size: 16px;")
+            self.status_indicator.setStyleSheet("color: #ff6b6b; font-size: 15px;")
             self.status_text.setText("未连接")
-            self.status_text.setStyleSheet("color: #f44336;")
+            self.status_text.setStyleSheet("color: #ff6b6b; font-weight: 700;")
             self.btn_connect.setEnabled(True)
             self.btn_disconnect.setEnabled(False)
 
@@ -335,10 +321,12 @@ class CTModelPanel(QGroupBox):
 
     def _init_ui(self):
         layout = QVBoxLayout()
-        layout.setSpacing(8)
+        layout.setSpacing(9)
+        layout.setContentsMargins(6, 14, 6, 6)
 
         # ===== 加载按钮 =====
-        self.load_btn = QPushButton("📁 选择DICOM文件夹")
+        self.load_btn = QPushButton("选择 DICOM 文件夹")
+        _set_button_variant(self.load_btn, "secondary")
         self.load_btn.clicked.connect(self._on_load_clicked)
         layout.addWidget(self.load_btn)
 
@@ -349,7 +337,7 @@ class CTModelPanel(QGroupBox):
 
         # ===== 状态标签 =====
         self.status_label = QLabel("未加载模型")
-        self.status_label.setStyleSheet("color: #888; font-size: 11px;")
+        self.status_label.setStyleSheet("color: #8090a3; font-size: 11px;")
         layout.addWidget(self.status_label)
 
         # ===== 显示/隐藏 =====
@@ -360,9 +348,10 @@ class CTModelPanel(QGroupBox):
         layout.addWidget(self.visibility_checkbox)
 
         # ===== 清除按钮 =====
-        self.clear_btn = QPushButton("🗑️ 清除模型")
+        self.clear_btn = QPushButton("清除模型")
         self.clear_btn.clicked.connect(self.clear_clicked.emit)
         self.clear_btn.setEnabled(False)
+        _set_button_variant(self.clear_btn, "secondary")
         layout.addWidget(self.clear_btn)
 
         layout.addStretch()
@@ -394,10 +383,10 @@ class CTModelPanel(QGroupBox):
             self.status_label.setText(
                 f"✓ 已加载: {info['num_vertices']} 顶点, {info['num_faces']} 面"
             )
-            self.status_label.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            self.status_label.setStyleSheet("color: #58d68d; font-size: 11px; font-weight: 700;")
         else:
             self.status_label.setText("未加载模型")
-            self.status_label.setStyleSheet("color: #888; font-size: 11px;")
+            self.status_label.setStyleSheet("color: #8090a3; font-size: 11px;")
 
 
 class PuncturePointPanel(QGroupBox):
@@ -408,61 +397,46 @@ class PuncturePointPanel(QGroupBox):
     reselect_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
-        super().__init__("📍 穿刺点选择", parent)
+        super().__init__("穿刺点选择", parent)
         self.setStyleSheet("""
             QGroupBox {
-                color: #ffcc00;
-                border: 2px solid #ffcc00;
-                border-radius: 8px;
+                color: #f4c430;
+                background: #171f2a;
+                border: 1px solid #8a6d1f;
+                border-radius: 7px;
                 margin-top: 12px;
-                padding-top: 12px;
+                padding: 12px 8px 8px 8px;
                 font-weight: bold;
-                font-size: 14px;
-                background: rgba(255, 204, 0, 0.1);
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
-                left: 15px;
-                padding: 0 5px;
+                left: 10px;
+                padding: 0 6px;
+                background: #111824;
             }
         """)
 
         layout = QVBoxLayout()
-        layout.setSpacing(8)
+        layout.setSpacing(9)
+        layout.setContentsMargins(6, 14, 6, 6)
 
         #  提示文字
         self.hint_label = QLabel("请先导入CT模型")
         self.hint_label.setStyleSheet("""
-            color: #aaaaaa; 
+            color: #d6e2ea;
             font-size: 12px; 
             padding: 8px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 4px;
+            background: #101824;
+            border: 1px solid #26374d;
+            border-radius: 5px;
         """)
         self.hint_label.setWordWrap(True)
         layout.addWidget(self.hint_label)
 
         #  开始选择按钮
-        self.start_btn = QPushButton("🎯 开始选择穿刺点")
-        self.start_btn.setStyleSheet("""
-            QPushButton {
-                background: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background: #45a049;
-            }
-            QPushButton:disabled {
-                background: #555555;
-                color: #888888;
-            }
-        """)
+        self.start_btn = QPushButton("开始选择穿刺点")
+        _set_button_variant(self.start_btn, "primary")
         self.start_btn.clicked.connect(self.start_selection_clicked.emit)
         self.start_btn.setEnabled(False)
         layout.addWidget(self.start_btn)
@@ -479,9 +453,9 @@ class PuncturePointPanel(QGroupBox):
         self.coord_labels = {}
         for i, axis in enumerate(['X', 'Y', 'Z']):
             label = QLabel(f"{axis}:")
-            label.setStyleSheet("color: #ffcc00; font-weight: bold;")
+            label.setStyleSheet("color: #f4c430; font-weight: bold;")
             value = QLabel("--")
-            value.setStyleSheet("color: white; font-family: 'Consolas', monospace;")
+            value.setStyleSheet(f"color: #f7fbff; {_VALUE_FONT}")
 
             coord_grid.addWidget(label, i, 0)
             coord_grid.addWidget(value, i, 1)
@@ -491,11 +465,11 @@ class PuncturePointPanel(QGroupBox):
 
         # 法线方向显示
         normal_title = QLabel("法线方向:")
-        normal_title.setStyleSheet("color: #ffcc00; font-weight: bold;")
+        normal_title.setStyleSheet("color: #f4c430; font-weight: bold;")
         coord_layout.addWidget(normal_title)
 
         self.normal_label = QLabel("--")
-        self.normal_label.setStyleSheet("color: white; font-family: 'Consolas', monospace;")
+        self.normal_label.setStyleSheet(f"color: #f7fbff; {_VALUE_FONT}")
         self.normal_label.setWordWrap(True)
         coord_layout.addWidget(self.normal_label)
 
@@ -503,24 +477,8 @@ class PuncturePointPanel(QGroupBox):
         layout.addWidget(self.coord_widget)
 
         # 重选按钮
-        self.reselect_btn = QPushButton("🔄 重新选择穿刺点")
-        self.reselect_btn.setStyleSheet("""
-            QPushButton {
-                background: #ff6b6b;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: #ff5252;
-            }
-            QPushButton:disabled {
-                background: #555555;
-                color: #888888;
-            }
-        """)
+        self.reselect_btn = QPushButton("重新选择穿刺点")
+        _set_button_variant(self.reselect_btn, "danger")
         self.reselect_btn.clicked.connect(self.reselect_clicked.emit)
         self.reselect_btn.setVisible(False)
         layout.addWidget(self.reselect_btn)
@@ -533,37 +491,40 @@ class PuncturePointPanel(QGroupBox):
     def set_model_loaded(self, loaded):
         """设置模型加载状态"""
         if loaded:
-            self.hint_label.setText("✓ CT模型已加载，可以开始选择穿刺点")
+            self.hint_label.setText("CT 模型已加载，可以开始选择穿刺点")
             self.hint_label.setStyleSheet("""
-                color: #00ff00; 
+                color: #58d68d;
                 font-size: 12px; 
                 padding: 8px;
-                background: rgba(0, 255, 0, 0.1);
-                border-radius: 4px;
+                background: rgba(31, 157, 99, 0.16);
+                border: 1px solid rgba(88, 214, 141, 0.35);
+                border-radius: 5px;
             """)
             self.start_btn.setEnabled(True)
         else:
             self.hint_label.setText("请先导入CT模型")
             self.hint_label.setStyleSheet("""
-                color: #aaaaaa; 
+                color: #d6e2ea;
                 font-size: 12px; 
                 padding: 8px;
-                background: rgba(255, 255, 255, 0.05);
-                border-radius: 4px;
+                background: #101824;
+                border: 1px solid #26374d;
+                border-radius: 5px;
             """)
             self.start_btn.setEnabled(False)
 
     def set_selecting_mode(self, selecting):
         """设置选择模式"""
         if selecting:
-            self.hint_label.setText("👆 请在CT模型上点击选择穿刺点")
+            self.hint_label.setText("请在 CT 模型上点击选择穿刺点")
             self.hint_label.setStyleSheet("""
-                color: #ffcc00; 
+                color: #f4c430;
                 font-size: 12px; 
                 font-weight: bold;
                 padding: 8px;
-                background: rgba(255, 204, 0, 0.15);
-                border-radius: 4px;
+                background: rgba(244, 196, 48, 0.12);
+                border: 1px solid rgba(244, 196, 48, 0.42);
+                border-radius: 5px;
             """)
             self.start_btn.setEnabled(False)
         else:
@@ -579,14 +540,15 @@ class PuncturePointPanel(QGroupBox):
             f"[{normal[0]:6.3f}, {normal[1]:6.3f}, {normal[2]:6.3f}]"
         )
 
-        self.hint_label.setText("✅ 穿刺点已选择")
+        self.hint_label.setText("穿刺点已选择")
         self.hint_label.setStyleSheet("""
-            color: #00ff00; 
+            color: #58d68d;
             font-size: 12px; 
             font-weight: bold;
             padding: 8px;
-            background: rgba(0, 255, 0, 0.15);
-            border-radius: 4px;
+            background: rgba(31, 157, 99, 0.18);
+            border: 1px solid rgba(88, 214, 141, 0.42);
+            border-radius: 5px;
         """)
 
         self.start_btn.setVisible(False)
@@ -599,13 +561,14 @@ class PuncturePointPanel(QGroupBox):
             label.setText("--")
         self.normal_label.setText("--")
 
-        self.hint_label.setText("✓ CT模型已加载，可以开始选择穿刺点")
+        self.hint_label.setText("CT 模型已加载，可以开始选择穿刺点")
         self.hint_label.setStyleSheet("""
-               color: #00ff00; 
+               color: #58d68d;
                font-size: 12px; 
                padding: 8px;
-               background: rgba(0, 255, 0, 0.1);
-               border-radius: 4px;
+               background: rgba(31, 157, 99, 0.16);
+               border: 1px solid rgba(88, 214, 141, 0.35);
+               border-radius: 5px;
            """)
 
         self.start_btn.setVisible(True)
@@ -623,11 +586,11 @@ class PuncturePointPanel(QGroupBox):
 
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
-        separator.setStyleSheet("background: rgba(255, 204, 0, 0.3);")
+        separator.setStyleSheet("background: rgba(244, 196, 48, 0.3);")
         alignment_layout.addWidget(separator)
 
-        title = QLabel("📐 角度偏差监控")
-        title.setStyleSheet("color: #ffcc00; font-weight: bold; font-size: 13px; padding: 5px 0;")
+        title = QLabel("角度偏差监控")
+        title.setStyleSheet("color: #f4c430; font-weight: bold; font-size: 13px; padding: 5px 0;")
         alignment_layout.addWidget(title)
 
         self.alignment_status_label = QLabel("等待连接...")
@@ -635,7 +598,7 @@ class PuncturePointPanel(QGroupBox):
         self.alignment_status_label.setStyleSheet("""
             QLabel {
                 font-size: 13px; font-weight: bold; padding: 8px;
-                border-radius: 4px; background: #95a5a6; color: white;
+                border-radius: 5px; background: #34495e; color: white;
             }
         """)
         alignment_layout.addWidget(self.alignment_status_label)
@@ -645,9 +608,10 @@ class PuncturePointPanel(QGroupBox):
         self.alignment_error_label.setStyleSheet("""
             QLabel {
                 font-size: 28px; font-weight: bold; padding: 12px;
-                background: rgba(52, 73, 94, 0.8); color: #3498db;
-                border-radius: 4px; margin-top: 5px;
-                font-family: 'Consolas', monospace;
+                background: rgba(16, 24, 36, 0.95); color: #45d7ff;
+                border: 1px solid #26374d;
+                border-radius: 6px; margin-top: 5px;
+                font-family: 'Cascadia Mono', 'Consolas', monospace;
             }
         """)
         alignment_layout.addWidget(self.alignment_error_label)
@@ -669,18 +633,18 @@ class PuncturePointPanel(QGroupBox):
         self.alignment_status_label.setText(status)
 
         if "已对齐" in status:
-            bg = "#2ecc71"
+            bg = "#1f9d63"
         elif "接近对齐" in status:
-            bg = "#f39c12"
+            bg = "#c58b12"
         else:
-            bg = "#e74c3c"
+            bg = "#c94a5a"
 
         self.alignment_status_label.setStyleSheet(f"""
             QLabel {{
                 font-size: 13px;
                 font-weight: bold;
                 padding: 8px;
-                border-radius: 4px;
+                border-radius: 5px;
                 background: {bg};
                 color: white;
             }}
@@ -723,13 +687,13 @@ class GuidanceArrowWidget(QWidget):
         radius = min(w, h) / 2.0 - 8
 
         # === 背景（半透明暗色圆盘）===
-        bg = QColor(15, 15, 35)
-        painter.setPen(QPen(QColor(60, 70, 100), 1.5))
+        bg = QColor(10, 17, 27)
+        painter.setPen(QPen(QColor(55, 78, 105), 1.5))
         painter.setBrush(bg)
         painter.drawEllipse(QPointF(cx_f, cy_f), radius, radius)
 
         if not self._visible:
-            painter.setPen(QColor(80, 80, 100))
+            painter.setPen(QColor(95, 111, 130))
             fnt = QFont("Consolas", 9)
             painter.setFont(fnt)
             painter.drawText(QRect(int(cx_f - 30), int(cy_f + radius - 20),
@@ -737,7 +701,7 @@ class GuidanceArrowWidget(QWidget):
             return
 
         # === 刻度圈 ===
-        painter.setPen(QPen(QColor(50, 60, 90), 1))
+        painter.setPen(QPen(QColor(42, 58, 80), 1))
         for i in range(12):
             a = i * 30 * math.pi / 180
             r1 = radius * 0.85 if i % 3 == 0 else radius * 0.92
@@ -746,7 +710,7 @@ class GuidanceArrowWidget(QWidget):
                              QPointF(cx_f + r2*math.cos(a), cy_f + r2*math.sin(a)))
 
         # === 十字线 ===
-        painter.setPen(QPen(QColor(60, 70, 100), 1))
+        painter.setPen(QPen(QColor(64, 88, 116), 1))
         inner = radius * 0.1
         outer = radius * 0.85
         painter.drawLine(QPointF(cx_f - outer, cy_f), QPointF(cx_f - inner, cy_f))
@@ -756,7 +720,7 @@ class GuidanceArrowWidget(QWidget):
 
         # === 中心点（目标标记）===
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(100, 200, 255))
+        painter.setBrush(QColor(69, 215, 255))
         painter.drawEllipse(QPointF(cx_f, cy_f), 3, 3)
 
         # === 颜色（角度→色相）===
