@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QSizePolicy,
     QScrollArea,
+    QPushButton,
 )
 
 from core.device_manager import DeviceManager
@@ -31,12 +32,15 @@ from ui.widgets.gl_widget import GLVisualizationWidget
 from ui.widgets.panels import (
     CTModelPanel,
     DeviceConnectionPanel,
-    GuidanceArrowWidget,
     IMUDataPanel,
     PuncturePointPanel,
 )
 from ui.widgets.puncture_point_selector import PuncturePointSelector
 from ui.widgets.simulation_panel import SimulationPanel
+from ui.widgets.workflow_stepper import WorkflowStepBar
+from ui.widgets.alignment_hud import AlignmentHudPanel
+from ui.widgets.prep_sidebar import PrepSidebar
+from ui.widgets.ui_helpers import configure_side_scroll, set_label_role
 
 
 class MainWindow(QMainWindow):
@@ -65,11 +69,13 @@ class MainWindow(QMainWindow):
         self.puncture_selector = None
         self.puncture_point = None
         self.puncture_normal = None
+        self._ct_model_loaded = False
 
         self.alignment_timer = QTimer(self)
         self.alignment_timer.setInterval(100)
         self.alignment_timer.timeout.connect(self._update_alignment)
 
+        self._refresh_workflow_steps()
         print("✓ 主窗口初始化完成")
 
     def _init_core_components(self):
@@ -78,11 +84,17 @@ class MainWindow(QMainWindow):
 
     def _init_ui(self):
         central = QWidget()
+        central.setObjectName("AppRoot")
         self.setCentralWidget(central)
 
-        main_layout = QHBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(0)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(10)
+        root.addWidget(self._create_app_header())
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
 
         self._splitter = QSplitter(Qt.Horizontal)
         self._splitter.addWidget(self._create_left_panel())
@@ -94,7 +106,29 @@ class MainWindow(QMainWindow):
         self._splitter.setCollapsible(0, False)
         self._splitter.setCollapsible(2, False)
 
-        main_layout.addWidget(self._splitter)
+        body.addWidget(self._splitter)
+        root.addLayout(body, stretch=1)
+
+    def _create_app_header(self):
+        header = QFrame()
+        header.setObjectName("AppHeader")
+        outer = QVBoxLayout(header)
+        outer.setContentsMargins(16, 10, 16, 10)
+        outer.setSpacing(10)
+
+        top = QHBoxLayout()
+        title = QLabel("手术探针定位系统")
+        title.setObjectName("AppTitle")
+        top.addWidget(title)
+        top.addStretch()
+        self.header_status = QLabel("IMU 未连接")
+        self.header_status.setObjectName("HeaderStatusPill")
+        top.addWidget(self.header_status)
+        outer.addLayout(top)
+
+        self.workflow_bar = WorkflowStepBar()
+        outer.addWidget(self.workflow_bar)
+        return header
 
     def _create_center_panel(self):
         panel = QFrame()
@@ -106,36 +140,36 @@ class MainWindow(QMainWindow):
         self.gl_widget = GLVisualizationWidget()
         self.gl_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.gl_widget)
-
         return panel
 
     def _create_left_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(260)
-        panel.setMaximumWidth(340)
+        panel.setMinimumWidth(300)
+        panel.setMaximumWidth(420)
 
         scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
         content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setSpacing(12)
-        layout.setContentsMargins(10, 10, 10, 10)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(12, 10, 12, 12)
+        content_layout.setSpacing(10)
+
+        prep_title = QLabel("准备")
+        prep_title.setObjectName("SectionTitle")
+        content_layout.addWidget(prep_title)
 
         self.ct_panel = CTModelPanel()
-        layout.addWidget(self.ct_panel)
-
         self.connection_panel = DeviceConnectionPanel()
-        layout.addWidget(self.connection_panel)
-
         self.imu_panel = IMUDataPanel()
-        layout.addWidget(self.imu_panel)
 
-        layout.addStretch()
-        scroll.setWidget(content)
+        self._prep_sidebar = PrepSidebar()
+        self._prep_sidebar.add_section("影像 · DICOM", self.ct_panel, expanded=True)
+        self._prep_sidebar.add_section("设备 · 串口", self.connection_panel, expanded=False)
+        self._prep_sidebar.add_section("遥测 · IMU", self.imu_panel, expanded=False)
+        content_layout.addWidget(self._prep_sidebar)
+        content_layout.addStretch()
+
+        configure_side_scroll(scroll, content)
 
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -145,41 +179,68 @@ class MainWindow(QMainWindow):
     def _create_right_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
+        panel.setMinimumWidth(300)
+        panel.setMaximumWidth(440)
 
-        # 滚动区域，防止内容被裁
         scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setSpacing(12)
         layout.setContentsMargins(10, 10, 10, 10)
 
-        guide_title = QLabel("对准引导")
-        guide_title.setStyleSheet("color: #70d6ff; font-size: 14px; font-weight: 700;")
+        guide_title = QLabel("引导")
+        guide_title.setObjectName("SectionTitle")
         layout.addWidget(guide_title)
 
-        self.guidance_widget = GuidanceArrowWidget()
-        layout.addWidget(self.guidance_widget, alignment=Qt.AlignHCenter)
-
         self.puncture_panel = PuncturePointPanel()
-        self.puncture_panel.setVisible(False)
         layout.addWidget(self.puncture_panel)
+
+        self.alignment_hud = AlignmentHudPanel()
+        layout.addWidget(self.alignment_hud)
 
         self.sim_panel = SimulationPanel()
         layout.addWidget(self.sim_panel)
-
         layout.addStretch()
-        scroll.setWidget(content)
 
-        panel.setMinimumWidth(300)
-        panel.setMaximumWidth(430)
+        configure_side_scroll(scroll, content)
 
         outer_layout = QVBoxLayout(panel)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(scroll)
         return panel
+
+    def _refresh_workflow_steps(self):
+        states = ["pending", "pending", "pending", "pending"]
+        if not self._ct_model_loaded:
+            states[0] = "active"
+        else:
+            states[0] = "done"
+            if self.puncture_point is None:
+                states[1] = "active"
+                self._prep_sidebar.set_active_section(0)
+            else:
+                states[1] = "done"
+                if not self.device_manager.is_connected:
+                    states[2] = "active"
+                    self._prep_sidebar.set_active_section(1)
+                else:
+                    states[2] = "done"
+                    states[3] = "active"
+                    self._prep_sidebar.set_active_section(2)
+        self.workflow_bar.set_states(states)
+
+    def _update_header_status(self):
+        if self.device_manager.is_connected:
+            fps = getattr(self, "_display_fps", 0)
+            text = f"IMU 已连接 · {fps:.0f} Hz" if fps > 0 else "IMU 已连接"
+            role = "ok"
+        else:
+            text = "IMU 未连接"
+            role = "muted"
+        self.header_status.setText(text)
+        self.header_status.setProperty("role", role)
+        self.header_status.style().unpolish(self.header_status)
+        self.header_status.style().polish(self.header_status)
 
     def _apply_window_geometry(self):
         """按当前屏幕可用区域设置窗口大小，避免超出显示器导致面板被裁切。"""
@@ -208,8 +269,8 @@ class MainWindow(QMainWindow):
 
         side_total = max(target_w - 80, 600)
         self._splitter.setSizes([
-            int(side_total * 0.18),
-            int(side_total * 0.60),
+            int(side_total * 0.24),
+            int(side_total * 0.54),
             int(side_total * 0.22),
         ])
 
@@ -228,8 +289,6 @@ class MainWindow(QMainWindow):
         self.connection_panel.connect_clicked.connect(self._on_serial_connect)
         self.connection_panel.disconnect_clicked.connect(self._on_serial_disconnect)
 
-        self.imu_panel.clear_trajectory_clicked.connect(self._on_clear_trajectory)
-        self.imu_panel.reset_view_clicked.connect(self._on_reset_view)
         self.connection_panel.calibration_clicked.connect(self._on_calibration_requested)
 
         self.sim_panel.simulation_started.connect(self._on_simulation_started)
@@ -273,6 +332,8 @@ class MainWindow(QMainWindow):
         self.imu_panel.set_status(connected, self._display_fps if connected else 0)
         if not connected:
             self._display_fps = 0
+        self._update_header_status()
+        self._refresh_workflow_steps()
         print("✓ 串口已连接" if connected else "✓ 串口已断开")
 
     def _on_device_error(self, error_msg):
@@ -328,7 +389,8 @@ class MainWindow(QMainWindow):
     def _stop_alignment_monitoring(self):
         if self.alignment_timer.isActive():
             self.alignment_timer.stop()
-        self.guidance_widget.hide_guidance()
+        self.alignment_hud.hide_guidance()
+        self._refresh_workflow_steps()
 
     def _on_device_connected_wrapper(self):
         self._on_connection_changed(True)
@@ -393,7 +455,6 @@ class MainWindow(QMainWindow):
         # 设置对齐目标方向并启动监控
         self.target_direction_world = np.array(default_path, dtype=float)
         self._start_alignment_monitoring()
-        self.puncture_panel.setVisible(True)
         print(f"[Main] ✓ 已设置预设路径: {default_path}")
 
     def _on_simulation_stopped(self):
@@ -412,6 +473,7 @@ class MainWindow(QMainWindow):
 
         if self.device_manager.is_connected:
             self.imu_panel.set_status(True, self._display_fps)
+        self._update_header_status()
 
         inverted_direction = [
             -self._needle_direction[0],
@@ -456,8 +518,9 @@ class MainWindow(QMainWindow):
 
         self.puncture_selector.set_model(model_data["vertices"], model_data["faces"])
 
-        self.puncture_panel.setVisible(True)
         self.puncture_panel.set_model_loaded(True)
+        self._ct_model_loaded = True
+        self._refresh_workflow_steps()
 
         center = model_data["center"]
         self.target_point = center + np.array([30, -25, 60])
@@ -478,6 +541,8 @@ class MainWindow(QMainWindow):
     def _on_ct_clear(self):
         self.gl_widget.clear_head_model()
         self.ct_panel.set_model_loaded(False)
+        self._ct_model_loaded = False
+        self._refresh_workflow_steps()
         print("[Main] ✓ CT模型已清除")
 
     def _on_puncture_point_selected(self, point, normal):
@@ -493,6 +558,7 @@ class MainWindow(QMainWindow):
         self.gl_widget.set_entry_target_line(point, self.target_point)
 
         self.puncture_selector.setEnabled(False)
+        self._refresh_workflow_steps()
 
         QMessageBox.information(
             self,
@@ -501,7 +567,7 @@ class MainWindow(QMainWindow):
             f"📍 Entry点: [{point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f}] mm\n"
             f"🎯 Target点: [{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, {self.target_point[2]:.1f}] mm\n"
             f"📏 穿刺深度: 80.0 mm\n\n"
-            f"下一步：点击左侧的连接设备按钮",
+            f"下一步：在左侧「设备连接」中连接串口",
             QMessageBox.Ok,
         )
 
@@ -512,6 +578,7 @@ class MainWindow(QMainWindow):
             return
         self.puncture_selector.setEnabled(True)
         self.puncture_panel.set_selecting_mode(True)
+        self._refresh_workflow_steps()
 
     def _on_reselect_puncture_point(self):
         print("[Main] 🔄 重新选择穿刺点")
@@ -520,6 +587,7 @@ class MainWindow(QMainWindow):
         self.gl_widget.clear_puncture_point()
         self.puncture_panel.clear()
         self._on_start_selection()
+        self._refresh_workflow_steps()
 
     def _on_device_connected(self):
         print("[Main] ✓ 设备已连接")
@@ -554,8 +622,8 @@ class MainWindow(QMainWindow):
         self.target_direction_world = entry_to_target / np.linalg.norm(entry_to_target)
         print(f"[Main] 目标方向（Entry→Target）: {self.target_direction_world}")
 
-        self.puncture_panel.setVisible(True)
         self._start_alignment_monitoring()
+        self._refresh_workflow_steps()
 
         QMessageBox.information(
             self,
@@ -585,21 +653,19 @@ class MainWindow(QMainWindow):
         dot_product = np.clip(dot_product, -1.0, 1.0)
         angle_error_deg = np.degrees(np.arccos(dot_product))
 
-        self.puncture_panel.set_alignment_error(angle_error_deg)
-        if angle_error_deg < 5.0:
-            self.puncture_panel.set_alignment_status("✓ 已对齐")
-            if angle_error_deg < 2.0:
-                self.puncture_panel.set_alignment_status("★ 完美对齐")
+        if angle_error_deg < 2.0:
+            self.alignment_hud.set_status("★ 完美对齐")
+        elif angle_error_deg < 5.0:
+            self.alignment_hud.set_status("✓ 已对齐")
         else:
-            self.puncture_panel.set_alignment_status(f"偏离 {angle_error_deg:.1f}°")
+            self.alignment_hud.set_status(f"偏离 {angle_error_deg:.1f}°")
 
-        # 方向指示器：显示"针尖该往哪个方向摆"（target在垂直于current平面上的投影）
         curr_u = np.asarray(current_direction, dtype=float)
         curr_u = curr_u / np.linalg.norm(curr_u)
         targ_u = np.asarray(target_direction, dtype=float)
         targ_u = targ_u / np.linalg.norm(targ_u)
         correction = targ_u - curr_u * np.dot(targ_u, curr_u)
-        self.guidance_widget.set_guidance(correction, angle_error_deg)
+        self.alignment_hud.set_guidance(correction, angle_error_deg)
 
         if not hasattr(self, "_last_log_time"):
             self._last_log_time = 0.0

@@ -21,6 +21,12 @@ from ui.main_window import MainWindow
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    base_font = app.font()
+    if base_font.pointSize() > 0:
+        base_font.setPointSize(max(base_font.pointSize(), 10))
+    else:
+        base_font.setPointSizeF(max(base_font.pointSizeF(), 10.0))
+    app.setFont(base_font)
 
     style_path = os.path.join(_ROOT, "styles", "stylesheet.qss")
     if os.path.isfile(style_path):
