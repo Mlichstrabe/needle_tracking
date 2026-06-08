@@ -18,10 +18,14 @@ class DicomModelLoader(QObject):
     def __init__(self):
         super().__init__()
 
-        # 自适应参数：大体积自动提高降采样
+        # 质量/速度：裁剪后体素数自适应降采样；仅各向同性，避免比例失真
         self.hu_threshold = -800
-        self.simplification_ratio = 0.15
+        self.simplification_ratio = 0.22
+        self.large_mesh_simplification_ratio = 0.13
+        self.min_face_count = 16000
         self.downsample_factor = 2
+        self._voxel_threshold_high = 50_000_000
+        self._voxel_threshold_mid = 14_000_000
 
     def load_dicom_folder(self, folder_path):
         """加载DICOM文件夹"""
@@ -33,10 +37,6 @@ class DicomModelLoader(QObject):
                 self.loading_failed.emit("未找到有效的DICOM文件")
                 return
 
-            # 自适应降采样：文件多的数据集用更大降采样因子
-            effective_downsample = self._pick_downsample_factor(len(dicom_files))
-            self.progress_updated.emit(5, f"自适应降采样因子: {effective_downsample} (切片数: {len(dicom_files)})")
-
             self.progress_updated.emit(10, f"正在并行读取 {len(dicom_files)} 个切片...")
             slices = self._read_and_sort_slices(dicom_files)
 
@@ -46,8 +46,17 @@ class DicomModelLoader(QObject):
             self.progress_updated.emit(45, "正在裁剪体数据...")
             volume_3d = self._crop_volume(volume_3d)
 
+            effective_downsample = self._pick_downsample_factor(volume_3d.shape)
+            voxels = int(np.prod(volume_3d.shape))
+            self.progress_updated.emit(
+                48,
+                f"降采样 ×{effective_downsample}（体素 {voxels:,}）",
+            )
+
             self.progress_updated.emit(50, "正在降采样...")
-            volume_3d, actual_spacing = self._downsample_volume(volume_3d, slices[0], effective_downsample)
+            volume_3d, actual_spacing = self._downsample_volume(
+                volume_3d, slices[0], effective_downsample
+            )
 
             actual_spacing = self._fix_spacing_ratio(actual_spacing)
 
@@ -88,12 +97,15 @@ class DicomModelLoader(QObject):
             error_msg = f"加载失败: {str(e)}\n{traceback.format_exc()}"
             self.loading_failed.emit(error_msg)
 
-    def _pick_downsample_factor(self, num_slices):
-        """根据切片数量自适应选择降采样因子"""
-        if num_slices > 300:
-            return 4
-        elif num_slices > 150:
+    def _pick_downsample_factor(self, volume_shape):
+        """根据裁剪后体素数选择各向同性降采样因子（上限 3，不再用 ×4）"""
+        voxels = int(np.prod(volume_shape))
+        if voxels > self._voxel_threshold_high:
             return 3
+        if voxels > self._voxel_threshold_mid:
+            return 2
+        if voxels <= 8_000_000:
+            return 1
         return self.downsample_factor
 
     def _scan_dicom_files(self, folder_path):
@@ -171,21 +183,21 @@ class DicomModelLoader(QObject):
         from scipy import ndimage
 
         f = factor or self.downsample_factor
-        original_shape = volume.shape
-        downsampled = ndimage.zoom(
-            volume,
-            (1/f, 1/f, 1/f),
-            order=1
-        )
-
         pixel_spacing = reference_slice.PixelSpacing
-        slice_thickness = float(reference_slice.SliceThickness) if hasattr(reference_slice, 'SliceThickness') else 1.0
-
-        actual_spacing = (
-            slice_thickness * f,
-            pixel_spacing[0] * f,
-            pixel_spacing[1] * f
+        slice_thickness = (
+            float(reference_slice.SliceThickness)
+            if hasattr(reference_slice, "SliceThickness")
+            else 1.0
         )
+        spacing = (slice_thickness, pixel_spacing[0], pixel_spacing[1])
+
+        if f <= 1:
+            print(f"[降采样] 跳过 (体素 {volume.shape})")
+            return volume, spacing
+
+        original_shape = volume.shape
+        downsampled = ndimage.zoom(volume, (1 / f, 1 / f, 1 / f), order=1)
+        actual_spacing = (spacing[0] * f, spacing[1] * f, spacing[2] * f)
 
         print(f"[降采样] {original_shape} → {downsampled.shape} (因子={f})")
         return downsampled, actual_spacing
@@ -198,13 +210,18 @@ class DicomModelLoader(QObject):
         return fixed_spacing
 
     def _extract_surface(self, volume, spacing):
-        """提取等值面"""
-        verts, faces, normals, values = measure.marching_cubes(
-            volume,
-            level=self.hu_threshold,
-            spacing=spacing
+        """提取等值面（Lewiner，表面更稳定）"""
+        kwargs = dict(level=self.hu_threshold, spacing=spacing)
+        try:
+            verts, faces, normals, values = measure.marching_cubes(
+                volume, method="lewiner", **kwargs
+            )
+        except TypeError:
+            verts, faces, normals, values = measure.marching_cubes(volume, **kwargs)
+        print(
+            f"[Marching Cubes] HU={self.hu_threshold}, "
+            f"顶点={len(verts)}, 面={len(faces)}"
         )
-        print(f"[Marching Cubes] HU阈值={self.hu_threshold}, 顶点={len(verts)}, 面={len(faces)}")
         return verts, faces
 
     def _simplify_mesh(self, vertices, faces):
@@ -214,11 +231,11 @@ class DicomModelLoader(QObject):
 
             # 自适应：网格越大，简化目标越低
             ratio = self.simplification_ratio
-            if len(faces) > 300000:
-                ratio = min(ratio, 0.08)
-                print(f"[简化] 大网格({len(faces)}面)，自动降低简化目标: {ratio}")
+            if len(faces) > 350000:
+                ratio = min(ratio, self.large_mesh_simplification_ratio)
+                print(f"[简化] 大网格({len(faces)}面)，简化比例: {ratio}")
 
-            target_faces = max(int(len(faces) * ratio), 10000)  # 至少保留1万面
+            target_faces = max(int(len(faces) * ratio), self.min_face_count)
             simplified_mesh = mesh.simplify_quadric_decimation(target_faces)
             print(f"[简化] 面数: {len(faces)} → {len(simplified_mesh.faces)} (目标{target_faces})")
             return simplified_mesh.vertices, simplified_mesh.faces

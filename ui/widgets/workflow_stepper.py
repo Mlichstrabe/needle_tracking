@@ -25,7 +25,7 @@ class WorkflowStepBar(QWidget):
             chip.setObjectName("WorkflowStep")
             chip.setProperty("stepState", "pending")
             chip_layout = QHBoxLayout(chip)
-            chip_layout.setContentsMargins(10, 5, 10, 5)
+            chip_layout.setContentsMargins(8, 4, 8, 4)
             chip_layout.setSpacing(6)
 
             num = QLabel(str(i + 1))

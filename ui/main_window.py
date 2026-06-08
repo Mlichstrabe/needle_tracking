@@ -50,6 +50,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("手术探针定位系统 - 穿刺训练模式")
 
+        # 几何参数需在 UI 创建前可用
+        # 你当前实测：IMU 中心到针尖约 20cm
+        self.needle_length = 200.0
+
         self._init_core_components()
         self._init_ui()
         self._connect_signals()
@@ -60,11 +64,11 @@ class MainWindow(QMainWindow):
         self._current_euler = [0, 0, 0]
         self._last_needle_direction = np.array([0, 0, -1])
         self._needle_direction = [0, 0, -1]
+        self._smooth_enabled = True
+        self._smooth_alpha = 0.25
 
         self._cached_imu_pos = np.zeros(3)
         self._cached_tip_pos = np.zeros(3)
-
-        self.needle_length = 162.0
 
         self.puncture_selector = None
         self.puncture_point = None
@@ -113,8 +117,8 @@ class MainWindow(QMainWindow):
         header = QFrame()
         header.setObjectName("AppHeader")
         outer = QVBoxLayout(header)
-        outer.setContentsMargins(16, 10, 16, 10)
-        outer.setSpacing(10)
+        outer.setContentsMargins(12, 8, 12, 8)
+        outer.setSpacing(6)
 
         top = QHBoxLayout()
         title = QLabel("手术探针定位系统")
@@ -138,6 +142,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         self.gl_widget = GLVisualizationWidget()
+        self.gl_widget.needle_length = self.needle_length
         self.gl_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.gl_widget)
         return panel
@@ -145,14 +150,14 @@ class MainWindow(QMainWindow):
     def _create_left_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(300)
-        panel.setMaximumWidth(420)
+        panel.setMinimumWidth(260)
+        panel.setMaximumWidth(340)
 
         scroll = QScrollArea()
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(12, 10, 12, 12)
-        content_layout.setSpacing(10)
+        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setSpacing(8)
 
         prep_title = QLabel("准备")
         prep_title.setObjectName("SectionTitle")
@@ -179,24 +184,20 @@ class MainWindow(QMainWindow):
     def _create_right_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(300)
-        panel.setMaximumWidth(440)
+        panel.setMinimumWidth(280)
+        panel.setMaximumWidth(380)
 
         scroll = QScrollArea()
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(12)
-        layout.setContentsMargins(10, 10, 10, 10)
-
-        guide_title = QLabel("引导")
-        guide_title.setObjectName("SectionTitle")
-        layout.addWidget(guide_title)
-
-        self.puncture_panel = PuncturePointPanel()
-        layout.addWidget(self.puncture_panel)
+        layout.setSpacing(8)
+        layout.setContentsMargins(8, 8, 8, 8)
 
         self.alignment_hud = AlignmentHudPanel()
         layout.addWidget(self.alignment_hud)
+
+        self.puncture_panel = PuncturePointPanel()
+        layout.addWidget(self.puncture_panel)
 
         self.sim_panel = SimulationPanel()
         layout.addWidget(self.sim_panel)
@@ -269,9 +270,9 @@ class MainWindow(QMainWindow):
 
         side_total = max(target_w - 80, 600)
         self._splitter.setSizes([
-            int(side_total * 0.24),
-            int(side_total * 0.54),
             int(side_total * 0.22),
+            int(side_total * 0.58),
+            int(side_total * 0.20),
         ])
 
     def showEvent(self, event):
@@ -290,6 +291,10 @@ class MainWindow(QMainWindow):
         self.connection_panel.disconnect_clicked.connect(self._on_serial_disconnect)
 
         self.connection_panel.calibration_clicked.connect(self._on_calibration_requested)
+
+        # IMU 映射/平滑（用于修正镜像与跳变）
+        self.imu_panel.axis_mapping_changed.connect(self._on_axis_mapping_changed)
+        self.imu_panel.smoothing_changed.connect(self._on_smoothing_changed)
 
         self.sim_panel.simulation_started.connect(self._on_simulation_started)
         self.sim_panel.simulation_stopped.connect(self._on_simulation_stopped)
@@ -382,9 +387,33 @@ class MainWindow(QMainWindow):
     def _update_needle_direction_fast(self, quaternion):
         direction = needle_axis_scene_normalized(quaternion)
         if direction is not None:
-            self._needle_direction = direction
+            new_d = np.asarray(direction, dtype=float)
+            new_n = float(np.linalg.norm(new_d))
+            if new_n > 1e-9:
+                new_d = new_d / new_n
+            if self._smooth_enabled and self._last_needle_direction is not None:
+                prev = np.asarray(self._last_needle_direction, dtype=float)
+                prev_n = float(np.linalg.norm(prev))
+                if prev_n > 1e-9:
+                    prev = prev / prev_n
+                a = float(self._smooth_alpha)
+                blended = (1.0 - a) * prev + a * new_d
+                b_n = float(np.linalg.norm(blended))
+                if b_n > 1e-9:
+                    new_d = blended / b_n
+            self._needle_direction = new_d.tolist()
             self._last_needle_direction = np.array(self._needle_direction)
         self.gl_widget.update_needle_direction(self._needle_direction)
+
+    def _on_axis_mapping_changed(self, swap_xy: bool, sx: float, sy: float, sz: float, yaw_offset_deg: float):
+        from core.imu_kinematics import set_scene_mapping, set_scene_yaw_offset_deg
+
+        set_scene_mapping(swap_xy=swap_xy, sx=sx, sy=sy, sz=sz)
+        set_scene_yaw_offset_deg(yaw_offset_deg)
+
+    def _on_smoothing_changed(self, enabled: bool, alpha: float):
+        self._smooth_enabled = bool(enabled)
+        self._smooth_alpha = float(alpha)
 
     def _stop_alignment_monitoring(self):
         if self.alignment_timer.isActive():
@@ -658,7 +687,7 @@ class MainWindow(QMainWindow):
         elif angle_error_deg < 5.0:
             self.alignment_hud.set_status("✓ 已对齐")
         else:
-            self.alignment_hud.set_status(f"偏离 {angle_error_deg:.1f}°")
+            self.alignment_hud.set_status("需调整姿态")
 
         curr_u = np.asarray(current_direction, dtype=float)
         curr_u = curr_u / np.linalg.norm(curr_u)

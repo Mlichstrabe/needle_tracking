@@ -29,6 +29,9 @@ def _apply_hint_state(label, text, state="default"):
 class IMUDataPanel(QWidget):
     """IMU 遥测（手风琴内嵌，无 GroupBox 外框）"""
 
+    axis_mapping_changed = pyqtSignal(bool, float, float, float, float)  # swap_xy, sx, sy, sz, yaw_offset_deg
+    smoothing_changed = pyqtSignal(bool, float)  # enabled, alpha
+
     def __init__(self, parent=None):
         super().__init__(parent)
         apply_panel_chrome(self)
@@ -102,6 +105,75 @@ class IMUDataPanel(QWidget):
         self._quat_toggle.clicked.connect(self._toggle_quaternion)
         layout.addWidget(self._quat_toggle)
         layout.addWidget(self._quat_card)
+
+        self.chk_mirror_lr = QCheckBox("左右镜像修正（3D 针体与实物同向）")
+        self.chk_mirror_lr.setChecked(True)
+        self.chk_mirror_lr.setToolTip(
+            "若左右仍反向，取消勾选；若前后反向或上下反向，请用下方开关继续调。"
+        )
+        self.chk_mirror_lr.toggled.connect(self._emit_axis_mapping)
+        layout.addWidget(self.chk_mirror_lr)
+
+        self.chk_mirror_fb = QCheckBox("前后翻转（有时是这个反向）")
+        self.chk_mirror_fb.setChecked(True)
+        self.chk_mirror_fb.toggled.connect(self._emit_axis_mapping)
+        layout.addWidget(self.chk_mirror_fb)
+
+        self.chk_mirror_ud = QCheckBox("上下翻转（仅在上下颠倒时打开）")
+        self.chk_mirror_ud.setChecked(True)
+        self.chk_mirror_ud.toggled.connect(self._emit_axis_mapping)
+        layout.addWidget(self.chk_mirror_ud)
+
+        self.chk_swap_xy = QCheckBox("交换 X/Y（转动方向怪、或 45°像 90° 时尝试）")
+        self.chk_swap_xy.setChecked(False)
+        self.chk_swap_xy.toggled.connect(self._emit_axis_mapping)
+        layout.addWidget(self.chk_swap_xy)
+
+        yaw_row = QHBoxLayout()
+        yaw_row.addWidget(QLabel("水平偏置"))
+        self.combo_yaw_off = QComboBox()
+        self.combo_yaw_off.addItem("0°", 0.0)
+        self.combo_yaw_off.addItem("+90°", 90.0)
+        self.combo_yaw_off.addItem("-90°", -90.0)
+        self.combo_yaw_off.addItem("180°", 180.0)
+        self.combo_yaw_off.setToolTip("交换XY后仍固定偏 90° 时，用这里一键消掉偏差。")
+        self.combo_yaw_off.currentIndexChanged.connect(lambda *_: self._emit_axis_mapping())
+        yaw_row.addWidget(self.combo_yaw_off, 1)
+        layout.addLayout(yaw_row)
+
+        self.chk_smooth = QCheckBox("方向平滑（抑制乱飘/跳变）")
+        self.chk_smooth.setChecked(True)
+        self.chk_smooth.toggled.connect(self._emit_smoothing)
+        layout.addWidget(self.chk_smooth)
+
+        smooth_row = QHBoxLayout()
+        smooth_row.addWidget(QLabel("平滑强度"))
+        self.combo_smooth = QComboBox()
+        self.combo_smooth.addItem("弱（更跟手）", 0.45)
+        self.combo_smooth.addItem("中（推荐）", 0.25)
+        self.combo_smooth.addItem("强（更稳）", 0.12)
+        self.combo_smooth.setCurrentIndex(1)
+        self.combo_smooth.currentIndexChanged.connect(lambda *_: self._emit_smoothing())
+        smooth_row.addWidget(self.combo_smooth, 1)
+        layout.addLayout(smooth_row)
+
+        # 初始发射一次默认映射
+        self._emit_axis_mapping()
+        self._emit_smoothing()
+
+    def _emit_axis_mapping(self, *_):
+        # sx: 左右，sy: 前后，sz: 上下
+        sx = -1.0 if self.chk_mirror_lr.isChecked() else 1.0
+        sy = -1.0 if self.chk_mirror_fb.isChecked() else 1.0
+        sz = -1.0 if self.chk_mirror_ud.isChecked() else 1.0
+        swap_xy = self.chk_swap_xy.isChecked()
+        yaw_off = float(self.combo_yaw_off.currentData())
+        self.axis_mapping_changed.emit(swap_xy, sx, sy, sz, yaw_off)
+
+    def _emit_smoothing(self, *_):
+        enabled = self.chk_smooth.isChecked()
+        alpha = float(self.combo_smooth.currentData())
+        self.smoothing_changed.emit(enabled, alpha)
 
     def _toggle_quaternion(self):
         show = not self._quat_card.isVisible()
@@ -377,8 +449,8 @@ class PuncturePointPanel(QFrame):
         self.setObjectName("WorkflowCard")
         apply_panel_chrome(self)
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
+        layout.setContentsMargins(8, 8, 8, 8)
 
         self.hint_label = QLabel("请先导入 CT 模型")
         self.hint_label.setWordWrap(True)
@@ -504,8 +576,8 @@ class GuidanceArrowWidget(QWidget):
         self._dot_x = 0.0
         self._dot_y = 0.0
         self._visible = False
-        self.setMinimumSize(140, 140)
-        self.setMaximumSize(200, 200)
+        self.setMinimumSize(100, 100)
+        self.setMaximumSize(152, 152)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     def set_guidance(self, correction_3d, angle_deg):
@@ -605,4 +677,13 @@ class GuidanceArrowWidget(QWidget):
         painter.setPen(QPen(color, 1.5))
         painter.setBrush(Qt.NoBrush)
         painter.drawEllipse(QPointF(px, py), 9, 9)
+
+        painter.setPen(color)
+        fnt = QFont("Consolas", 10, QFont.Bold)
+        painter.setFont(fnt)
+        painter.drawText(
+            QRect(int(cx_f - 44), int(cy_f + radius - 22), 88, 18),
+            Qt.AlignCenter,
+            f"{self._angle_deg:.1f}°",
+        )
 

@@ -63,8 +63,8 @@ class SimulationPanel(QFrame):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         title = QLabel("③ 路径引导")
         title.setObjectName("SectionTitle")

@@ -31,6 +31,8 @@ class GLVisualizationWidget(QFrame):
         self.tip_positions = []
         self.imu_position = np.array([0, 0, 0], dtype=float)
         self.tip_position = np.array([0, 0, 0], dtype=float)
+        # 由 MainWindow 覆盖（IMU 中心→针尖距离）
+        self.needle_length = 200.0
 
         # 虚线路径
         self.preset_path_direction = None
@@ -171,12 +173,12 @@ class GLVisualizationWidget(QFrame):
             tip_pos = list(self._fixed_tip_position)
             # 重新计算 imu_pos（保持针体长度不变）
             if hasattr(self, '_needle_direction') and self._needle_direction is not None:
-                needle_length = 100.0  # 默认针体长度
                 direction = np.array(self._needle_direction)
+                nl = float(getattr(self, "needle_length", 162.0))
                 imu_pos = [
-                    tip_pos[0] - direction[0] * needle_length,
-                    tip_pos[1] - direction[1] * needle_length,
-                    tip_pos[2] - direction[2] * needle_length
+                    tip_pos[0] - direction[0] * nl,
+                    tip_pos[1] - direction[1] * nl,
+                    tip_pos[2] - direction[2] * nl,
                 ]
 
         # ====== 以下是原有代码，保持不变 ======
@@ -411,10 +413,6 @@ class GLVisualizationWidget(QFrame):
 
         print("[GL] 所有路径虚线已清除")
 
-    def update_needle_direction(self, direction):
-        """更新针尖方向"""
-        self._needle_direction = direction if direction else [0, 0, 1]
-
     def clear_trajectory(self):
         """清除轨迹"""
         self.tip_positions = []
@@ -603,11 +601,10 @@ class GLVisualizationWidget(QFrame):
         else:
             direction = self._needle_direction
 
-        # 针体长度
-        needle_length = 100.0  # mm
+        nl = float(getattr(self, "needle_length", 162.0))
 
         # 计算针体末端位置
-        needle_end = self.tip_position - direction * needle_length
+        needle_end = self.tip_position - direction * nl
 
         # 更新针体线条
         self.needle_line.setData(pos=np.array([
@@ -619,8 +616,8 @@ class GLVisualizationWidget(QFrame):
         self.tip_box.resetTransform()
         self.tip_box.translate(*self.tip_position)
 
-        # 更新IMU立方体位置（在针体中部）
-        imu_position = self.tip_position - direction * 50.0
+        # 更新IMU立方体位置（针尾 / IMU 盒）
+        imu_position = self.tip_position - direction * nl
         self.imu_box.resetTransform()
         self.imu_box.translate(*imu_position)
 

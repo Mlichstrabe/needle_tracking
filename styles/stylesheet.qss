@@ -8,7 +8,7 @@ QWidget#AppRoot {
 QWidget {
     color: #d4dee8;
     font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
-    font-size: 14px;
+    font-size: 13px;
 }
 
 /* —— Chrome —— */
@@ -24,7 +24,7 @@ QFrame#AppHeader {
 
 QLabel#AppTitle {
     color: #e8f2fa;
-    font-size: 17px;
+    font-size: 15px;
     font-weight: 700;
     letter-spacing: 0.3px;
 }
@@ -36,9 +36,9 @@ QLabel#AppSubtitle {
 
 QLabel#SectionTitle {
     color: #5ec8f0;
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 700;
-    padding: 2px 0 8px 0;
+    padding: 0 0 4px 0;
 }
 
 QLabel#StepLabel {
@@ -103,8 +103,8 @@ QLabel[role="muted"] {
 
 QLabel[role="hint"] {
     color: #b8c8d8;
-    font-size: 13px;
-    padding: 10px 12px;
+    font-size: 12px;
+    padding: 6px 8px;
     background: #0d131c;
     border: 1px solid #26374d;
     border-radius: 8px;
@@ -112,8 +112,8 @@ QLabel[role="hint"] {
 
 QLabel[role="hint-success"] {
     color: #9ae6b8;
-    font-size: 13px;
-    padding: 10px 12px;
+    font-size: 12px;
+    padding: 6px 8px;
     background: rgba(31, 157, 99, 0.12);
     border: 1px solid rgba(88, 214, 141, 0.35);
     border-radius: 8px;
@@ -121,9 +121,9 @@ QLabel[role="hint-success"] {
 
 QLabel[role="hint-warn"] {
     color: #f0d878;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    padding: 10px 12px;
+    padding: 6px 8px;
     background: rgba(244, 196, 48, 0.1);
     border: 1px solid rgba(244, 196, 48, 0.38);
     border-radius: 8px;
@@ -160,7 +160,7 @@ QLabel[role="danger"] {
 }
 
 QPushButton {
-    min-height: 36px;
+    min-height: 30px;
     background: #1a2535;
     color: #eaf3f8;
     border: 1px solid #354d6a;
@@ -295,9 +295,9 @@ QFrame#PrepSectionBody {
 
 QPushButton#PrepSectionHeader {
     text-align: left;
-    padding: 10px 12px;
-    min-height: 38px;
-    font-size: 14px;
+    padding: 8px 10px;
+    min-height: 32px;
+    font-size: 13px;
     font-weight: 700;
     background: #151d2a;
     border: none;
@@ -454,12 +454,12 @@ QSplitter::handle:hover {
 }
 
 QLabel#AlignmentStatus {
-    font-size: 13px;
-    font-weight: 700;
-    padding: 8px 10px;
-    border-radius: 7px;
-    background: #2a3545;
-    color: #d4dee8;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 8px;
+    border-radius: 6px;
+    background: #1a2433;
+    color: #b8c8d8;
 }
 
 QLabel#AlignmentStatus[status="ok"] {
