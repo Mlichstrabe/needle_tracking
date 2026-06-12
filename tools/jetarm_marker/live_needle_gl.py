@@ -20,34 +20,30 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
-import pyqtgraph.opengl as gl
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from tools.jetarm_marker.needle_gl_view import (  # noqa: E402
+    MarkerOverlay,
+    configure_console_encoding,
+    fit_gl_camera_to_points,
+)
 
-def _configure_console_encoding() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
-
-
-_configure_console_encoding()
+configure_console_encoding()
 
 from PyQt5.QtCore import QTimer  # noqa: E402
-from PyQt5.QtGui import QVector3D  # noqa: E402
-from PyQt5.QtWidgets import QApplication, QHBoxLayout, QLabel, QMainWindow, QVBoxLayout, QWidget  # noqa: E402
+from PyQt5.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget  # noqa: E402
 
 from tools.jetarm_marker.ir_depth_stream_protocol import (  # noqa: E402
     IrDepthFrame,
     connect_ir_depth_stream,
     iter_ir_depth_frames,
 )
-from tools.jetarm_marker.ir_marker_detect import DetectParams, MarkerTracker  # noqa: E402
-from tools.jetarm_marker.live_pose_estimate import estimate_live_needle_pose, load_depth_camera_info  # noqa: E402
+from tools.jetarm_marker.ir_marker_detect import DetectParams, MarkerTracker, ir_array_to_u8  # noqa: E402
+from tools.jetarm_marker.live_pose_estimate import LiveNeedlePose, estimate_live_needle_pose, load_depth_camera_info  # noqa: E402
 from tools.jetarm_marker.rosbag_io import TOPIC_DEPTH, TOPIC_IR, load_image_frames  # noqa: E402
-from tools.jetarm_marker.ir_marker_detect import ir_array_to_u8  # noqa: E402
 from ui.widgets.gl_widget import GLVisualizationWidget  # noqa: E402
 
 
@@ -72,9 +68,7 @@ class LiveNeedleWindow(QMainWindow):
         self._bag_mode = bag_mode
         self._bag_frames: List[Tuple[np.ndarray, np.ndarray]] = []
         self._bag_index = 0
-        self._tips_history: List[np.ndarray] = []
         self._camera_fitted = False
-        self._last_pose_valid = False
         self._fps = 0.0
 
         central = QWidget()
@@ -84,7 +78,7 @@ class LiveNeedleWindow(QMainWindow):
         self._gl = GLVisualizationWidget()
         self._gl.set_marker_replay_mode(True)
         self._gl.needle_length = self._needle_length_mm
-        self._init_marker_overlay()
+        self._overlay = MarkerOverlay(self._gl)
         self._gl.view.setCameraPosition(distance=400, elevation=25, azimuth=45)
         layout.addWidget(self._gl, stretch=1)
 
@@ -96,68 +90,23 @@ class LiveNeedleWindow(QMainWindow):
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
-    def _init_marker_overlay(self) -> None:
-        self._marker_colors = {
-            0: (0.15, 0.45, 1.00, 1.0),
-            1: (1.00, 0.85, 0.10, 1.0),
-            2: (0.00, 0.95, 1.00, 1.0),
-            3: (1.00, 0.25, 0.95, 1.0),
-        }
-        self._marker_scatter = gl.GLScatterPlotItem(
-            pos=np.zeros((1, 3), dtype=np.float32),
-            color=np.array([[0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
-            size=9.0,
-            pxMode=False,
-        )
-        self._gl.view.addItem(self._marker_scatter)
-        self._marker_rods = gl.GLLinePlotItem(
-            pos=np.zeros((1, 3), dtype=np.float32),
-            color=(0.75, 0.95, 1.0, 0.8),
-            width=2.0,
-            antialias=True,
-            mode="lines",
-        )
-        self._gl.view.addItem(self._marker_rods)
-
     def load_bag_frames(self, pairs: List[Tuple[np.ndarray, np.ndarray]]) -> None:
         self._bag_frames = pairs
         self._bag_index = 0
-
-    def _update_marker_overlay(self, markers: List[Tuple[int, np.ndarray]]) -> None:
-        if not markers:
-            self._marker_scatter.setData(
-                pos=np.zeros((1, 3), dtype=np.float32),
-                color=np.array([[0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
-            )
-            self._marker_rods.setData(pos=np.zeros((1, 3), dtype=np.float32))
-            return
-        positions = np.asarray([p for _i, p in markers], dtype=np.float32)
-        colors = np.asarray(
-            [self._marker_colors.get(i, (1.0, 1.0, 1.0, 1.0)) for i, _p in markers],
-            dtype=np.float32,
-        )
-        self._marker_scatter.setData(pos=positions, color=colors, size=9.0, pxMode=False)
-        by_id = {i: p for i, p in markers}
-        segments = []
-        for a, b in ((0, 3), (2, 1)):
-            if a in by_id and b in by_id:
-                segments.extend([by_id[a], by_id[b]])
-        if segments:
-            self._marker_rods.setData(pos=np.asarray(segments, dtype=np.float32))
-        else:
-            self._marker_rods.setData(pos=np.zeros((1, 3), dtype=np.float32))
 
     def _fit_camera_once(self, tip: np.ndarray, markers: List[Tuple[int, np.ndarray]]) -> None:
         if self._camera_fitted:
             return
         points = [tip]
         points.extend(p for _i, p in markers)
-        all_points = np.asarray(points, dtype=np.float64)
-        center = all_points.mean(axis=0)
-        extent = float(np.linalg.norm(all_points.max(axis=0) - all_points.min(axis=0)))
-        distance = float(np.clip(max(extent * 3.5, self._needle_length_mm * 2.5, 220.0), 220.0, 800.0))
-        self._gl.view.opts["center"] = QVector3D(float(center[0]), float(center[1]), float(center[2]))
-        self._gl.view.setCameraPosition(distance=distance, elevation=22, azimuth=45)
+        fit_gl_camera_to_points(
+            self._gl,
+            points,
+            needle_length_mm=self._needle_length_mm,
+            extent_scale=3.5,
+            min_distance=220.0,
+            max_distance=800.0,
+        )
         self._camera_fitted = True
 
     def _poll_frame(self) -> Optional[IrDepthFrame]:
@@ -180,8 +129,6 @@ class LiveNeedleWindow(QMainWindow):
 
         detect = self._tracker.process(frame.gray, enforce_match_gate=False)
         if frame.depth is None:
-            from tools.jetarm_marker.live_pose_estimate import LiveNeedlePose
-
             pose = LiveNeedlePose(
                 valid=False,
                 tip=None,
@@ -203,16 +150,8 @@ class LiveNeedleWindow(QMainWindow):
 
         if pose.valid and pose.tip is not None and pose.axis is not None:
             self._gl.set_marker_needle_pose(pose.tip, pose.axis, confidence=pose.confidence)
-            self._update_marker_overlay(pose.markers)
+            self._overlay.update(pose.markers)
             self._fit_camera_once(pose.tip, pose.markers)
-            self._tips_history.append(pose.tip.copy())
-            if len(self._tips_history) > 200:
-                self._tips_history.pop(0)
-            self._last_pose_valid = True
-            tip_text = f"tip=({pose.tip[0]:.0f},{pose.tip[1]:.0f},{pose.tip[2]:.0f}) mm"
-        else:
-            self._last_pose_valid = False
-            tip_text = "tip=— (pose invalid)"
 
         dt = time.perf_counter() - t0
         if dt > 1e-6:
@@ -221,6 +160,11 @@ class LiveNeedleWindow(QMainWindow):
         rom = "n/a" if detect.rom_rms_mm is None else f"{detect.rom_rms_mm:.1f}"
         ratio = "n/a" if detect.axis_length_ratio_2d is None else f"{detect.axis_length_ratio_2d:.2f}"
         depth_ok = "yes" if frame.depth is not None else "no"
+        tip_text = (
+            f"tip=({pose.tip[0]:.0f},{pose.tip[1]:.0f},{pose.tip[2]:.0f}) mm"
+            if pose.valid and pose.tip is not None
+            else "tip=— (pose invalid)"
+        )
         self._status.setText(
             f"fps={self._fps:.1f}  candidates={detect.candidate_count}  depth={depth_ok}  "
             f"rom_rms={rom}  ratio={ratio}  pose={'OK' if pose.valid else 'FAIL'}  {tip_text}"

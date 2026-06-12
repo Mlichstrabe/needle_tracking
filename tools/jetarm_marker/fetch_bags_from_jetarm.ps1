@@ -22,4 +22,4 @@ foreach ($name in @("marker_static_clean_01", "marker_move_clean_01")) {
     scp -r "${Remote}:${RemotePath}/${name}" $Dest
 }
 
-Write-Host "完成。请运行 bag_probe.py 验证。"
+Write-Host "完成。可用 legacy/bag_probe.py 探测 topic，或直接用 detect_ir_markers.py 跑 IR 主路径。"

@@ -97,23 +97,23 @@ def main() -> int:
   parser.add_argument("--min-circularity", type=float, default=0.15)
   parser.add_argument("--edge-margin", type=int, default=14)
   parser.add_argument("--max-match-px", type=float, default=70.0)
-    parser.add_argument("--min-axis-ratio", type=float, default=0.55, help="m1 几何门控阈值")
-    parser.add_argument("--max-rom-rms-mm", type=float, default=22.0, help="ROM 边长拟合 RMS 上限（mm）")
-    parser.add_argument("--no-rom", action="store_true", help="禁用 ROM 匹配，回退 spread 启发式")
+  parser.add_argument("--min-axis-ratio", type=float, default=0.55, help="m1 几何门控阈值")
+  parser.add_argument("--max-rom-rms-mm", type=float, default=22.0, help="ROM 边长拟合 RMS 上限（mm）")
+  parser.add_argument("--no-rom", action="store_true", help="禁用 ROM 匹配，回退 spread 启发式")
   parser.add_argument("--enforce-match-gate", action="store_true")
   args = parser.parse_args()
 
-    params = DetectParams(
-        threshold_percentile=args.threshold_percentile,
-        min_area=args.min_area,
-        max_area=args.max_area,
-        min_circularity=args.min_circularity,
-        edge_margin=args.edge_margin,
-        max_match_px=args.max_match_px,
-        min_axis_length_ratio_2d=args.min_axis_ratio,
-        max_rom_rms_mm=args.max_rom_rms_mm,
-        use_rom=not args.no_rom,
-    )
+  params = DetectParams(
+    threshold_percentile=args.threshold_percentile,
+    min_area=args.min_area,
+    max_area=args.max_area,
+    min_circularity=args.min_circularity,
+    edge_margin=args.edge_margin,
+    max_match_px=args.max_match_px,
+    min_axis_length_ratio_2d=args.min_axis_ratio,
+    max_rom_rms_mm=args.max_rom_rms_mm,
+    use_rom=not args.no_rom,
+  )
 
   if args.source == "bag":
     if args.bag_dir is None:

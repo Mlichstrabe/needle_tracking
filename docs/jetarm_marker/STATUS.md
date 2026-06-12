@@ -19,10 +19,21 @@ requirements-jetarm-marker.txt
 **Agent 优先阅读**
 
 ```text
+tools/jetarm_marker/README.md
+tools/jetarm_marker/live_needle_gl.py
 tools/jetarm_marker/detect_ir_markers.py
 tools/jetarm_marker/pose_from_ir_depth.py
-tools/jetarm_marker/replay_pose_csv.py
-tools/jetarm_marker/README.md
+docs/jetarm_marker/LEGACY_RGB.md   # 旧 RGB 路径
+```
+
+**目录布局（2026-06 整理后）**
+
+```text
+tools/jetarm_marker/
+  主路径：live_needle_gl, live_ir_markers, detect_ir_markers,
+          pose_from_ir_depth, replay_pose_csv, ir_marker_detect,
+          needle_gl_view, ir_depth_stream_protocol
+  legacy/：track_markers, pose_from_markers, init_markers, run_pipeline 等
 ```
 
 ---
@@ -197,9 +208,12 @@ python tools\jetarm_marker\live_ir_markers.py --source bag data\jetarm_marker\ba
 
 | 文件 | 作用 |
 |------|------|
-| `ir_marker_detect.py` | 共享检测 + m1 几何门控 + 叠加绘制 |
-| `ir_stream_server.py` | JetArm 侧 IR → TCP JPEG |
-| `live_ir_markers.py` | Windows 实时/离线预览 |
+| `ir_marker_detect.py` | 共享检测 + ROM + m1 门控 |
+| `ir_depth_stream_protocol.py` | TCP 流 JARM/JARD |
+| `ir_stream_server.py` | JetArm 侧 IR+depth 推流 |
+| `needle_gl_view.py` | 3D marker 叠加与 CSV 回放窗口 |
+| `live_ir_markers.py` | Windows 2D 实时/离线预览 |
+| `live_needle_gl.py` | Windows 实时 3D 针体 |
 | `deploy_to_jetarm.ps1` | scp 到 `~/jetarm_marker_tools/` |
 
 ---
@@ -240,10 +254,7 @@ python tools\jetarm_marker\live_needle_gl.py --host 192.168.55.1
 
 ## 旧路径（仅供参考）
 
-| 路径 | 说明 |
-|------|------|
-| clean bag + RGB LK + `pose_from_markers.py` | 静态 jitter ~0.53 mm，无 IR，**非当前主叙事** |
-| `compare_modality_report.py` | clean 包已跑；IR 优势已由现场结论覆盖 |
+已归档至 `tools/jetarm_marker/legacy/`，文档见 [LEGACY_RGB.md](LEGACY_RGB.md)。
 
 ---
 
@@ -252,5 +263,6 @@ python tools\jetarm_marker\live_needle_gl.py --host 192.168.55.1
 | 文档 | 用途 |
 |------|------|
 | 本文 | Cursor 会话 handoff / 进度真相 |
-| [tools/jetarm_marker/README.md](../../tools/jetarm_marker/README.md) | 命令与输出路径 |
+| [tools/jetarm_marker/README.md](../../tools/jetarm_marker/README.md) | 主路径命令 |
+| [LEGACY_RGB.md](LEGACY_RGB.md) | 旧 RGB/LK 与模态探路 |
 | [2026-06-11-jetarm-marker-v1-implementation.md](../superpowers/specs/2026-06-11-jetarm-marker-v1-implementation.md) | 九阶段实施表 |

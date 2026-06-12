@@ -4,7 +4,7 @@
 阶段 1：探测 ROS2 bag（topic、帧数、时长）。
 
 用法:
-  python tools/jetarm_marker/bag_probe.py data/jetarm_marker/bags/marker_static_clean_01
+  python tools/jetarm_marker/legacy/bag_probe.py data/jetarm_marker/bags/marker_static_clean_01
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 

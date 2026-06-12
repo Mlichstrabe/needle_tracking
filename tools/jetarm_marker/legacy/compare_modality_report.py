@@ -12,7 +12,7 @@
   data/jetarm_marker/exports/<bag>/modality_frames/*.png
 
 用法:
-  python tools/jetarm_marker/compare_modality_report.py \\
+  python tools/jetarm_marker/legacy/compare_modality_report.py \\
       data/jetarm_marker/bags/marker_static_clean_01 --samples 16
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 

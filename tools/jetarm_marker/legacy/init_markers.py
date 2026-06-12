@@ -4,7 +4,7 @@
 阶段 2：在第一张清晰帧上手动点选 4 个 marker，保存 init JSON。
 
 用法:
-  python tools/jetarm_marker/init_markers.py \\
+  python tools/jetarm_marker/legacy/init_markers.py \\
       data/jetarm_marker/exports/marker_static_clean_01/frames/frame_003_idx0012_rgb.png
 
 操作:
@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 

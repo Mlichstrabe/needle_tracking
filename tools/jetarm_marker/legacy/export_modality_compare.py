@@ -4,7 +4,7 @@
 阶段 1：从 bag 导出 RGB / IR / depth 关键帧，生成对比拼图与帧索引表。
 
 用法:
-  python tools/jetarm_marker/export_modality_compare.py \\
+  python tools/jetarm_marker/legacy/export_modality_compare.py \\
       data/jetarm_marker/bags/marker_static_clean_01 \\
       --samples 12
 """
@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 

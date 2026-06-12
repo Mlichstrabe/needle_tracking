@@ -79,7 +79,7 @@ marker_move_rgb_ir_depth_01     # IR 69/98 姿态；门控剔除 28 帧
 | 优先级 | 脚本 |
 |--------|------|
 | ★ | `detect_ir_markers.py`, `pose_from_ir_depth.py`, `replay_pose_csv.py` |
-| 辅 | `bag_probe.py`, `export_modality_compare.py`, `compare_modality_report.py` |
-| 旧 | `track_markers.py`, `pose_from_markers.py`, `run_pipeline.py` |
+| 辅 | `legacy/bag_probe.py`, `legacy/export_modality_compare.py`, `legacy/compare_modality_report.py` |
+| 旧 | `legacy/track_markers.py`, `legacy/pose_from_markers.py`, `legacy/run_pipeline.py` |
 
 命令细节：[tools/jetarm_marker/README.md](../../tools/jetarm_marker/README.md)

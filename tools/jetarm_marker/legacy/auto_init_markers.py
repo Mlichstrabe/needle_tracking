@@ -6,7 +6,7 @@
 V1 主流程仍推荐 init_markers.py 手动点选；本脚本用于流水线/bootstrap。
 
 用法:
-  python tools/jetarm_marker/auto_init_markers.py \\
+  python tools/jetarm_marker/legacy/auto_init_markers.py \\
       --bag data/jetarm_marker/bags/marker_static_clean_01 \\
       --frame-index 238 \\
       --bag-name marker_static_clean_01
@@ -23,7 +23,7 @@ from typing import List, Tuple
 import cv2
 import numpy as np
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 

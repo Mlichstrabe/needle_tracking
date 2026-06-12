@@ -4,10 +4,10 @@
 阶段 3+ 一键流水线（需先完成阶段 1 模态对比）。
 
 阶段 1 请先运行:
-  python tools/jetarm_marker/compare_modality_report.py data/jetarm_marker/bags/<bag>
+  python tools/jetarm_marker/legacy/compare_modality_report.py data/jetarm_marker/bags/<bag>
 
 用法:
-  python tools/jetarm_marker/run_pipeline.py --bag marker_static_clean_01 --force
+  python tools/jetarm_marker/legacy/run_pipeline.py --bag marker_static_clean_01 --force
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _run(cmd: list) -> None:
@@ -49,20 +49,20 @@ def main() -> int:
     if not args.force and not modality_report.is_file():
         print(
             "请先完成阶段 1 模态对比:\n"
-            f"  python tools/jetarm_marker/compare_modality_report.py {bag_dir}\n"
+            f"  python tools/jetarm_marker/legacy/compare_modality_report.py {bag_dir}\n"
             "若 bag 无 IR，请在 JetArm 上运行 launch_depth_cam_with_ir.sh + record_modality_bag.sh 后重试。",
             file=sys.stderr,
         )
         return 2
 
     py = sys.executable
-    _run([py, "tools/jetarm_marker/bag_probe.py", str(bag_dir)])
-    _run([py, "tools/jetarm_marker/export_modality_compare.py", str(bag_dir), "--samples", "12"])
+    _run([py, "tools/jetarm_marker/legacy/bag_probe.py", str(bag_dir)])
+    _run([py, "tools/jetarm_marker/legacy/export_modality_compare.py", str(bag_dir), "--samples", "12"])
 
     init_json = _REPO_ROOT / "data" / "jetarm_marker" / "inits" / f"{args.bag}_init.json"
     preview = _REPO_ROOT / "data" / "jetarm_marker" / "inits" / f"{args.bag}_init_preview.png"
     _run([
-        py, "tools/jetarm_marker/auto_init_markers.py",
+        py, "tools/jetarm_marker/legacy/auto_init_markers.py",
         "--bag", str(bag_dir),
         "--frame-index", str(args.frame_index),
         "--bag-name", args.bag,
@@ -72,7 +72,7 @@ def main() -> int:
 
     track_csv = _REPO_ROOT / "data" / "jetarm_marker" / "tracking" / f"{args.bag}_track2d.csv"
     _run([
-        py, "tools/jetarm_marker/track_markers.py",
+        py, "tools/jetarm_marker/legacy/track_markers.py",
         "--bag", str(bag_dir),
         "--init", str(init_json),
         "--start", str(args.start),
@@ -84,7 +84,7 @@ def main() -> int:
     scene = _REPO_ROOT / "data" / "jetarm_marker" / "geometry" / "scene_transform.json"
     pose_csv = _REPO_ROOT / "data" / "jetarm_marker" / "tracking" / f"{args.bag}_pose.csv"
     _run([
-        py, "tools/jetarm_marker/pose_from_markers.py",
+        py, "tools/jetarm_marker/legacy/pose_from_markers.py",
         "--bag", str(bag_dir),
         "--track", str(track_csv),
         "--geometry", str(geom),

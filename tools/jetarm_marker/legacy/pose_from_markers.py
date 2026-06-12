@@ -4,7 +4,7 @@
 阶段 4–7：深度融合 + Kabsch 姿态 + 针尖/针轴 + scene 映射 → pose CSV。
 
 用法:
-  python tools/jetarm_marker/pose_from_markers.py \\
+  python tools/jetarm_marker/legacy/pose_from_markers.py \\
       --bag data/jetarm_marker/bags/marker_static_clean_01 \\
       --track data/jetarm_marker/tracking/marker_static_clean_01_track2d.csv \\
       --geometry data/jetarm_marker/geometry/needle_geometry.json \\
@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
