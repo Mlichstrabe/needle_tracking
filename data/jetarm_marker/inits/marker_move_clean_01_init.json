@@ -1,0 +1,30 @@
+{
+  "bag": "marker_move_clean_01",
+  "frame_image": "C:/Users/Lu/PyCharmMiscProject/needle_tracking/needle_tracking 无配准/data/jetarm_marker/exports/marker_move_clean_01/frames/frame_000_idx0000_rgb.png",
+  "frame_ref": "frame_000_idx0000_rgb.png",
+  "modality": "rgb",
+  "note": "Manual approximate initialization from exported RGB frame. Marker order: m0 right, m1 top, m2 bottom, m3 left/tip-side.",
+  "markers": [
+    {
+      "id": 0,
+      "u": 518.0,
+      "v": 361.0
+    },
+    {
+      "id": 1,
+      "u": 489.0,
+      "v": 263.0
+    },
+    {
+      "id": 2,
+      "u": 416.0,
+      "v": 443.0
+    },
+    {
+      "id": 3,
+      "u": 358.0,
+      "v": 307.0
+    }
+  ],
+  "created_utc": "2026-06-11T03:50:00Z"
+}

@@ -1,0 +1,11 @@
+{
+  "description": "相机光学系 → needle_tracking 3D scene 系。V1 固定刚体变换，可用 replay 目视微调。",
+  "rotation_row_major": [
+    [1.0, 0.0, 0.0],
+    [0.0, -1.0, 0.0],
+    [0.0, 0.0, -1.0]
+  ],
+  "translation_mm": [0.0, 0.0, 0.0],
+  "scale": 1.0,
+  "notes": "默认：相机 Z 朝前映射为 scene -Z（针默认竖直向下视觉）"
+}

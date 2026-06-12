@@ -1,0 +1,11 @@
+{
+  "description": "JetArm Orbbec depth 内参（与 IR 同分辨率 640x400 时使用）",
+  "width": 640,
+  "height": 400,
+  "fx": 478.3653869628906,
+  "fy": 478.3653869628906,
+  "cx": 321.607177734375,
+  "cy": 201.90570068359375,
+  "encoding": "16UC1",
+  "frame_id": "depth_cam_depth_optical_frame"
+}

@@ -639,3 +639,44 @@ class GLVisualizationWidget(QFrame):
         if hasattr(self, '_use_fixed_tip') and self._use_fixed_tip:
             return self._fixed_tip_position
         return None
+
+    def set_marker_replay_mode(self, enabled: bool = True):
+        """JetArm marker V1 回放：允许针尖随视觉估计移动，不记录 Entry 固定轨迹。"""
+        self._use_fixed_tip = not enabled
+        if enabled:
+            self._marker_replay_mode = True
+        elif hasattr(self, '_marker_replay_mode'):
+            delattr(self, '_marker_replay_mode')
+
+    def set_marker_needle_pose(self, tip_scene_mm, axis_scene_unit, confidence: float = 1.0):
+        """
+        JetArm 4-marker V1：设置针尖位置与针轴（scene 系，mm）。
+        内部复用 set_needle_tip_position + update_needle_direction。
+        """
+        tip = np.asarray(tip_scene_mm, dtype=float).reshape(3)
+        axis = np.asarray(axis_scene_unit, dtype=float).reshape(3)
+        n = float(np.linalg.norm(axis))
+        if n < 1e-12:
+            return
+        axis = axis / n
+
+        self.tip_position = tip.copy()
+        self._needle_direction = axis
+        if hasattr(self, '_marker_replay_mode') and self._marker_replay_mode:
+            self._use_fixed_tip = False
+
+        self._update_needle_visualization()
+
+        try:
+            self.tip_box.resetTransform()
+            self.tip_box.translate(float(tip[0]), float(tip[1]), float(tip[2]))
+            nl = float(getattr(self, "needle_length", 162.0))
+            imu_pos = tip - axis * nl
+            self.imu_box.resetTransform()
+            self.imu_box.translate(float(imu_pos[0]), float(imu_pos[1]), float(imu_pos[2]))
+            if self.needle_line is not None:
+                self.needle_line.setData(pos=np.array([tip, imu_pos], dtype=np.float32))
+        except Exception:
+            pass
+
+        self._last_marker_confidence = float(confidence)

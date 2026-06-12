@@ -11,6 +11,12 @@
 - **版本定位**：**无配准** — 不做 CT↔患者刚性配准；连接 IMU 后**针尖固定在 Entry**，仅根据四元数更新针体姿态与 IMU 位置
 - **入口**：`main.py` → `ui.main_window.MainWindow`
 
+### JetArm marker 实验线（临时代替 Aimooe 位移验证）
+
+与上文 IMU 主路径**并行**，代码在 `tools/jetarm_marker/`，数据在 `data/jetarm_marker/`。  
+**Cursor 进度真相源**：[docs/jetarm_marker/STATUS.md](docs/jetarm_marker/STATUS.md)  
+当前：**IR 检测 + IR/depth 链路已跑通**；下一步是**实时 IR 2D 窗口**，不是继续盲录 bag 或实时 3D。
+
 ---
 
 ## 2. 不要恢复的死代码（已删除）

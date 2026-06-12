@@ -1,0 +1,9 @@
+# JetArm 4-marker V1 离线工具（Windows 开发机，无需完整 ROS2）
+rosbags>=0.9.22
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+# 阶段 8 回放（与 main.py 相同）
+PyQt5>=5.15.0
+pyqtgraph>=0.13.0
+PyOpenGL>=3.1.0

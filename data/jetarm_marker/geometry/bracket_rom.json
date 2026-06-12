@@ -1,0 +1,15 @@
+{
+  "description": "针架 4 反光球 ROM（卡尺实测边长，单位 mm）。用于 2D IR 选点刚体匹配，类似 Aimooe .aimtool。",
+  "marker_ids": ["m0", "m1", "m2", "m3"],
+  "pairwise_mm": [
+    {"a": 0, "b": 1, "d": 68.0, "label": "m0-m1"},
+    {"a": 0, "b": 2, "d": 107.5, "label": "m0-m2"},
+    {"a": 0, "b": 3, "d": 68.0, "label": "m0-m3"},
+    {"a": 1, "b": 2, "d": 59.0, "label": "m1-m2"},
+    {"a": 1, "b": 3, "d": 95.0, "label": "m1-m3"},
+    {"a": 2, "b": 3, "d": 78.0, "label": "m2-m3"}
+  ],
+  "axis_ratio_m2m1_over_m0m3": 0.621053,
+  "measured": true,
+  "measured_date": "2026-06-12"
+}
