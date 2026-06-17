@@ -22,10 +22,12 @@ from PyQt5.QtWidgets import (
 
 from core.device_manager import DeviceManager
 from core.dicom_loader import DicomModelLoader
+from core.imu_geometry_config import apply_kinematics, load_config, save_config
 from core.imu_kinematics import (
     imu_position_from_tip,
     needle_axis_for_position,
     needle_axis_scene_normalized,
+    needle_body_angle_deg,
     tip_position_from_fixed,
 )
 from ui.widgets.gl_widget import GLVisualizationWidget
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         self._init_core_components()
         self._init_ui()
         self._connect_signals()
+        self._load_imu_geometry()
         self._init_timers()
         self._apply_window_geometry()
 
@@ -74,13 +77,31 @@ class MainWindow(QMainWindow):
         self.puncture_point = None
         self.puncture_normal = None
         self._ct_model_loaded = False
+        self._operation_mode = DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
 
         self.alignment_timer = QTimer(self)
         self.alignment_timer.setInterval(100)
         self.alignment_timer.timeout.connect(self._update_alignment)
 
         self._refresh_workflow_steps()
+        self._apply_operation_mode_ui()
         print("✓ 主窗口初始化完成")
+
+    def _is_observe_mode(self):
+        return self.connection_panel.get_operation_mode() == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE
+
+    def _apply_operation_mode_ui(self):
+        observe = self._is_observe_mode()
+        self._operation_mode = self.connection_panel.get_operation_mode()
+        self.puncture_panel.set_observe_mode(observe, self._ct_model_loaded)
+        self.sim_panel.set_training_enabled(not observe)
+        connected = self.device_manager.is_connected
+        self.alignment_hud.set_observe_mode(observe, connected=connected)
+        self.connection_panel.set_mode_switch_enabled(not connected)
+        if observe:
+            self.setWindowTitle("手术探针定位系统 - 姿态观察模式")
+        else:
+            self.setWindowTitle("手术探针定位系统 - 穿刺训练模式")
 
     def _init_core_components(self):
         self.device_manager = DeviceManager()
@@ -211,6 +232,18 @@ class MainWindow(QMainWindow):
         return panel
 
     def _refresh_workflow_steps(self):
+        if self._is_observe_mode():
+            states = ["pending", "pending", "pending", "pending"]
+            if not self.device_manager.is_connected:
+                states[2] = "active"
+                self._prep_sidebar.set_active_section(1)
+            else:
+                states[2] = "done"
+                states[3] = "active"
+                self._prep_sidebar.set_active_section(2)
+            self.workflow_bar.set_states(states)
+            return
+
         states = ["pending", "pending", "pending", "pending"]
         if not self._ct_model_loaded:
             states[0] = "active"
@@ -291,6 +324,7 @@ class MainWindow(QMainWindow):
         self.connection_panel.disconnect_clicked.connect(self._on_serial_disconnect)
 
         self.connection_panel.calibration_clicked.connect(self._on_calibration_requested)
+        self.connection_panel.operation_mode_changed.connect(self._on_operation_mode_changed)
 
         # IMU 映射/平滑（用于修正镜像与跳变）
         self.imu_panel.axis_mapping_changed.connect(self._on_axis_mapping_changed)
@@ -321,6 +355,14 @@ class MainWindow(QMainWindow):
         self._fps_last_time = time.perf_counter()
         self._display_fps = 0
 
+    def _on_operation_mode_changed(self, mode):
+        if self.device_manager.is_connected:
+            self.device_manager.disconnect()
+        self._apply_operation_mode_ui()
+        self._refresh_workflow_steps()
+        label = "姿态观察" if mode == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE else "穿刺训练"
+        print(f"[Main] 工作模式已切换: {label}")
+
     def _on_serial_connect(self, port, baudrate):
         if not self.device_manager.connect(port, baudrate):
             QMessageBox.warning(self, "连接失败", f"无法连接到 {port}")
@@ -334,9 +376,11 @@ class MainWindow(QMainWindow):
 
     def _on_connection_changed(self, connected):
         self.connection_panel.set_connected(connected)
+        self.connection_panel.set_mode_switch_enabled(not connected)
         self.imu_panel.set_status(connected, self._display_fps if connected else 0)
         if not connected:
             self._display_fps = 0
+        self._apply_operation_mode_ui()
         self._update_header_status()
         self._refresh_workflow_steps()
         print("✓ 串口已连接" if connected else "✓ 串口已断开")
@@ -405,20 +449,51 @@ class MainWindow(QMainWindow):
             self._last_needle_direction = np.array(self._needle_direction)
         self.gl_widget.update_needle_direction(self._needle_direction)
 
+    def _load_imu_geometry(self):
+        """启动时从 config/imu_geometry.json 恢复针轴角与场景映射。"""
+        self._imu_geometry_loading = True
+        try:
+            cfg = load_config()
+            apply_kinematics(cfg)
+            self.imu_panel.apply_settings(cfg)
+            print(
+                "[Main] IMU 几何已加载: "
+                f"针轴={needle_body_angle_deg():.1f}°, "
+                f"yaw偏置={cfg['scene_mapping'].get('yaw_offset_deg', 0.0):.0f}°"
+            )
+        finally:
+            self._imu_geometry_loading = False
+
+    def _persist_imu_geometry(self):
+        if getattr(self, "_imu_geometry_loading", False):
+            return
+        cfg = load_config()
+        cfg["needle_body_angle_deg"] = needle_body_angle_deg()
+        cfg["scene_mapping"] = self.imu_panel.scene_mapping_dict()
+        cfg["smoothing"] = self.imu_panel.smoothing_dict()
+        save_config(cfg)
+
     def _on_axis_mapping_changed(self, swap_xy: bool, sx: float, sy: float, sz: float, yaw_offset_deg: float):
         from core.imu_kinematics import set_scene_mapping, set_scene_yaw_offset_deg
 
         set_scene_mapping(swap_xy=swap_xy, sx=sx, sy=sy, sz=sz)
         set_scene_yaw_offset_deg(yaw_offset_deg)
+        self._persist_imu_geometry()
 
     def _on_smoothing_changed(self, enabled: bool, alpha: float):
         self._smooth_enabled = bool(enabled)
         self._smooth_alpha = float(alpha)
+        self._persist_imu_geometry()
 
     def _stop_alignment_monitoring(self):
         if self.alignment_timer.isActive():
             self.alignment_timer.stop()
-        self.alignment_hud.hide_guidance()
+        if self._is_observe_mode():
+            self.alignment_hud.set_observe_mode(
+                True, connected=self.device_manager.is_connected
+            )
+        else:
+            self.alignment_hud.hide_guidance()
         self._refresh_workflow_steps()
 
     def _on_device_connected_wrapper(self):
@@ -477,6 +552,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "校准完成", "传感器校准已完成！\n\n• 陀螺仪零偏已记录\n• 磁力计校准已保存")
 
     def _on_simulation_started(self):
+        if self._is_observe_mode():
+            return
         print("[Main] 穿刺路径引导模式已启动")
         default_path = [0, 0, 1]
         self.gl_widget.set_preset_path(default_path)
@@ -620,6 +697,21 @@ class MainWindow(QMainWindow):
 
     def _on_device_connected(self):
         print("[Main] ✓ 设备已连接")
+
+        if self._is_observe_mode():
+            self.gl_widget._camera_adjusted = False
+            self.gl_widget.set_needle_tip_position([0.0, 0.0, 0.0])
+            print("[Main] ✓ 观察模式：针尖已锚定世界原点 [0, 0, 0]")
+            self.alignment_hud.set_observe_mode(True, connected=True)
+            self._refresh_workflow_steps()
+            QMessageBox.information(
+                self,
+                "✓ 已连接（观察模式）",
+                "针尖固定在坐标原点 [0, 0, 0]。\n\n"
+                "转动探针即可在 3D 视图中观察针体姿态。",
+                QMessageBox.Ok,
+            )
+            return
 
         if self.puncture_point is None:
             QMessageBox.warning(

@@ -99,3 +99,10 @@ class SimulationPanel(QFrame):
 
     def update_current_direction(self, direction):
         self.current_needle_direction = np.array(direction)
+
+    def set_training_enabled(self, enabled: bool):
+        """穿刺训练模式下才启用路径引导。"""
+        self.toggle_btn.setEnabled(enabled)
+        self.lock_widget.setEnabled(enabled)
+        if not enabled and self.is_simulation_active:
+            self._toggle_simulation()

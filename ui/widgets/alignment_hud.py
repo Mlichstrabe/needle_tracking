@@ -15,6 +15,7 @@ class AlignmentHudPanel(QFrame):
 
         title = QLabel("② 对准 Target")
         title.setObjectName("SectionTitle")
+        self.title_label = title
         layout.addWidget(title)
 
         self.guidance_widget = GuidanceArrowWidget()
@@ -45,8 +46,28 @@ class AlignmentHudPanel(QFrame):
 
     def hide_guidance(self):
         self.guidance_widget.hide_guidance()
-        self.status_label.setText("连接设备并开始对准后显示偏差")
+        if getattr(self, "_observe_mode", False):
+            self.status_label.setText("观察模式 — 针尖固定在原点，仅显示姿态")
+        else:
+            self.status_label.setText("连接设备并开始对准后显示偏差")
         self.status_label.setProperty("status", "")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+
+    def set_observe_mode(self, enabled: bool, connected: bool = False):
+        """观察模式：隐藏对准罗盘，显示姿态观察提示。"""
+        self._observe_mode = enabled
+        if enabled:
+            self.title_label.setText("姿态观察")
+            self.guidance_widget.hide_guidance()
+            if connected:
+                self.status_label.setText("已连接 · 针尖在原点，转动探针观察姿态")
+            else:
+                self.status_label.setText("观察模式 — 连接 IMU 后针尖固定在原点")
+            self.status_label.setProperty("status", "ok" if connected else "")
+        else:
+            self.title_label.setText("② 对准 Target")
+            self.hide_guidance()
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
 

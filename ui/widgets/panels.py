@@ -157,7 +157,61 @@ class IMUDataPanel(QWidget):
         smooth_row.addWidget(self.combo_smooth, 1)
         layout.addLayout(smooth_row)
 
-        # 初始发射一次默认映射
+        hint = QLabel("映射与平滑会自动保存到 config/imu_geometry.json")
+        set_label_role(hint, "muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+    def _set_combo_by_data(self, combo: QComboBox, value: float) -> None:
+        target = float(value)
+        for i in range(combo.count()):
+            if float(combo.itemData(i)) == target:
+                combo.setCurrentIndex(i)
+                return
+
+    def scene_mapping_dict(self) -> dict:
+        return {
+            "mirror_lr": self.chk_mirror_lr.isChecked(),
+            "mirror_fb": self.chk_mirror_fb.isChecked(),
+            "mirror_ud": self.chk_mirror_ud.isChecked(),
+            "swap_xy": self.chk_swap_xy.isChecked(),
+            "yaw_offset_deg": float(self.combo_yaw_off.currentData()),
+        }
+
+    def smoothing_dict(self) -> dict:
+        return {
+            "enabled": self.chk_smooth.isChecked(),
+            "alpha": float(self.combo_smooth.currentData()),
+        }
+
+    def apply_settings(self, cfg: dict) -> None:
+        """从 config/imu_geometry.json 恢复 UI，并同步到主窗口。"""
+        sm = cfg.get("scene_mapping", {})
+        smooth = cfg.get("smoothing", {})
+
+        widgets = (
+            self.chk_mirror_lr,
+            self.chk_mirror_fb,
+            self.chk_mirror_ud,
+            self.chk_swap_xy,
+            self.chk_smooth,
+            self.combo_yaw_off,
+            self.combo_smooth,
+        )
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            self.chk_mirror_lr.setChecked(bool(sm.get("mirror_lr", True)))
+            self.chk_mirror_fb.setChecked(bool(sm.get("mirror_fb", True)))
+            self.chk_mirror_ud.setChecked(bool(sm.get("mirror_ud", True)))
+            self.chk_swap_xy.setChecked(bool(sm.get("swap_xy", False)))
+            self._set_combo_by_data(self.combo_yaw_off, float(sm.get("yaw_offset_deg", 0.0)))
+            self.chk_smooth.setChecked(bool(smooth.get("enabled", True)))
+            self._set_combo_by_data(self.combo_smooth, float(smooth.get("alpha", 0.25)))
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+
         self._emit_axis_mapping()
         self._emit_smoothing()
 
@@ -244,9 +298,13 @@ class IMUDataPanel(QWidget):
 class DeviceConnectionPanel(QWidget):
     """设备连接（手风琴页内容）"""
 
+    MODE_PUNCTURE_TRAINING = "puncture_training"
+    MODE_NEEDLE_OBSERVE = "needle_observe"
+
     connect_clicked = pyqtSignal(str, int)
     disconnect_clicked = pyqtSignal()
     calibration_clicked = pyqtSignal()
+    operation_mode_changed = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -258,6 +316,21 @@ class DeviceConnectionPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(2, 2, 2, 2)
+
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("工作模式"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("穿刺训练（需 CT + Entry）", self.MODE_PUNCTURE_TRAINING)
+        self.mode_combo.addItem("姿态观察（仅看针体）", self.MODE_NEEDLE_OBSERVE)
+        self.mode_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        mode_layout.addWidget(self.mode_combo, 1)
+        layout.addLayout(mode_layout)
+
+        self.observe_hint = QLabel("无需加载 CT，针尖固定在坐标原点")
+        self.observe_hint.setWordWrap(True)
+        set_label_role(self.observe_hint, "muted")
+        self.observe_hint.setVisible(False)
+        layout.addWidget(self.observe_hint)
 
         status_frame = QFrame()
         status_frame.setObjectName("StatusCard")
@@ -331,6 +404,22 @@ class DeviceConnectionPanel(QWidget):
         """连接内部信号"""
         self.btn_connect.clicked.connect(self._on_connect)
         self.btn_disconnect.clicked.connect(self.disconnect_clicked.emit)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_combo_changed)
+
+    def _on_mode_combo_changed(self, _index):
+        self._update_mode_hint()
+        self.operation_mode_changed.emit(self.get_operation_mode())
+
+    def _update_mode_hint(self):
+        observe = self.get_operation_mode() == self.MODE_NEEDLE_OBSERVE
+        self.observe_hint.setVisible(observe)
+
+    def get_operation_mode(self):
+        data = self.mode_combo.currentData()
+        return data if data else self.MODE_PUNCTURE_TRAINING
+
+    def set_mode_switch_enabled(self, enabled: bool):
+        self.mode_combo.setEnabled(enabled)
 
     def _on_connect(self):
         """点击连接按钮"""
@@ -511,6 +600,8 @@ class PuncturePointPanel(QFrame):
 
     def set_model_loaded(self, loaded):
         """设置模型加载状态"""
+        if getattr(self, "_observe_mode", False):
+            return
         if loaded:
             _apply_hint_state(
                 self.hint_label,
@@ -521,6 +612,20 @@ class PuncturePointPanel(QFrame):
         else:
             _apply_hint_state(self.hint_label, "请先导入 CT 模型", "default")
             self.start_btn.setEnabled(False)
+
+    def set_observe_mode(self, observe: bool, ct_loaded: bool = False):
+        """观察模式下禁用 Entry 选择。"""
+        self._observe_mode = observe
+        if observe:
+            self.start_btn.setEnabled(False)
+            self.reselect_btn.setEnabled(False)
+            _apply_hint_state(
+                self.hint_label,
+                "观察模式：切换到「穿刺训练」后可选择 Entry",
+                "default",
+            )
+        else:
+            self.set_model_loaded(ct_loaded)
 
     def set_selecting_mode(self, selecting):
         """设置选择模式"""
