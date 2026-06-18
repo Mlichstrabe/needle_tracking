@@ -104,7 +104,7 @@ def estimate_live_needle_pose(
     axis_end_marker: int = 1,
     tip_offset_mm: float = 140.0,
     needle_length_mm: float = 162.0,
-    depth_half_window: int = 3,
+    depth_half_window: int = 13,
     min_depth_pixels: int = 3,
     min_axis_length_ratio: float = 0.55,
     z_min_mm: float = 50.0,
