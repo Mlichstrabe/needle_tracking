@@ -53,7 +53,11 @@ class PrepSection(QFrame):
 
 
 class PrepSidebar(QWidget):
-    """影像 / 设备 / 遥测 三块手风琴。"""
+    """设备 / 影像 / 遥测 三块手风琴（CT 居中）。"""
+
+    SEC_DEVICE = 0
+    SEC_CT = 1
+    SEC_IMU = 2
 
     def __init__(self, parent=None):
         super().__init__(parent)

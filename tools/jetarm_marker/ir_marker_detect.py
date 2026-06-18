@@ -11,7 +11,13 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
-from tools.jetarm_marker.bracket_rom import BracketRom, load_default_rom, match_previous_labeled, select_four_by_rom
+from tools.jetarm_marker.bracket_rom import (
+    BracketRom,
+    load_default_rom,
+    match_four_near_previous,
+    match_previous_labeled,
+    select_four_by_rom,
+)
 
 DEFAULT_MIN_AXIS_LENGTH_RATIO_2D = 0.55
 DEFAULT_MAX_ROM_RMS_MM = 22.0
@@ -38,15 +44,17 @@ class Blob:
 @dataclass
 class DetectParams:
     threshold_percentile: float = 98.5
-    min_area: float = 12.0
+    min_area: float = 24.0
     max_area: float = 1800.0
-    min_circularity: float = 0.15
+    min_circularity: float = 0.18
     edge_margin: int = 14
     max_match_px: float = 70.0
     min_axis_length_ratio_2d: float = DEFAULT_MIN_AXIS_LENGTH_RATIO_2D
     max_rom_rms_mm: float = DEFAULT_MAX_ROM_RMS_MM
     use_rom: bool = True
-    rom_candidate_limit: int = 16
+    rom_candidate_limit: int = 8
+    max_blobs: int = 32
+    rom_fast: bool = True
 
 
 @dataclass
@@ -86,7 +94,22 @@ class MarkerTracker:
 
         if self.params.use_rom and self.rom is not None:
             blob_pts = [np.array([b.u, b.v], dtype=np.float64) for b in blobs[: self.params.rom_candidate_limit]]
-            match = select_four_by_rom(blob_pts, self.rom, max_rms_mm=self.params.max_rom_rms_mm)
+            match = None
+            if self.previous is not None:
+                match = match_four_near_previous(
+                    self.previous,
+                    blob_pts,
+                    self.rom,
+                    max_match_px=self.params.max_match_px,
+                    max_rms_mm=self.params.max_rom_rms_mm,
+                )
+            if match is None:
+                match = select_four_by_rom(
+                    blob_pts,
+                    self.rom,
+                    max_rms_mm=self.params.max_rom_rms_mm,
+                    fast=self.params.rom_fast,
+                )
             if match is not None:
                 selected = match.points
                 rom_rms = match.rms_mm
@@ -149,7 +172,7 @@ def ir_array_to_u8(arr: np.ndarray) -> np.ndarray:
 
 
 def detect_bright_blobs(gray: np.ndarray, *, params: DetectParams) -> List[Blob]:
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
     threshold = int(np.percentile(blur, params.threshold_percentile))
     threshold = max(threshold, 80)
     _, mask = cv2.threshold(blur, threshold, 255, cv2.THRESH_BINARY)
@@ -158,6 +181,10 @@ def detect_bright_blobs(gray: np.ndarray, *, params: DetectParams) -> List[Blob]
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if len(contours) > params.max_blobs:
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[: params.max_blobs]
+
+    h_img, w_img = gray.shape[:2]
     blobs: List[Blob] = []
     for contour in contours:
         area = float(cv2.contourArea(contour))
@@ -178,7 +205,6 @@ def detect_bright_blobs(gray: np.ndarray, *, params: DetectParams) -> List[Blob]
             continue
         u = float(moments["m10"] / moments["m00"])
         v = float(moments["m01"] / moments["m00"])
-        h_img, w_img = gray.shape[:2]
         if (
             u < params.edge_margin
             or v < params.edge_margin
@@ -186,9 +212,10 @@ def detect_bright_blobs(gray: np.ndarray, *, params: DetectParams) -> List[Blob]
             or v > h_img - params.edge_margin
         ):
             continue
-        blob_mask = np.zeros(gray.shape, dtype=np.uint8)
-        cv2.drawContours(blob_mask, [contour], -1, 255, -1)
-        mean_intensity = float(cv2.mean(gray, mask=blob_mask)[0])
+        ui, vi = int(round(u)), int(round(v))
+        ui = max(0, min(w_img - 1, ui))
+        vi = max(0, min(h_img - 1, vi))
+        mean_intensity = float(blur[vi, ui])
         score = mean_intensity * math.sqrt(area) * circularity * aspect
         blobs.append(
             Blob(
@@ -217,7 +244,7 @@ def _assign_angle_order(points: np.ndarray) -> np.ndarray:
 def _select_spread_four(blobs: List[Blob], image_shape: Tuple[int, int]) -> Optional[np.ndarray]:
     if len(blobs) < 4:
         return None
-    candidates = list(blobs[:16])
+    candidates = list(blobs[:8])
     max_score = max((b.score for b in candidates), default=1.0)
     diag = float(np.hypot(image_shape[1], image_shape[0]))
     best_points: Optional[np.ndarray] = None
@@ -274,10 +301,16 @@ def axis_length_ratio_2d(points: Optional[np.ndarray]) -> Optional[float]:
     return axis_len / cross_len
 
 
-def draw_live_overlay(result: FrameDetectResult, *, fps: Optional[float] = None) -> np.ndarray:
+def draw_live_overlay(
+    result: FrameDetectResult,
+    *,
+    fps: Optional[float] = None,
+    show_candidate_dots: bool = False,
+) -> np.ndarray:
     vis = cv2.cvtColor(result.gray, cv2.COLOR_GRAY2BGR)
-    for blob in result.blobs[:16]:
-        cv2.circle(vis, (int(round(blob.u)), int(round(blob.v))), 4, (255, 120, 0), 1)
+    if show_candidate_dots:
+        for blob in result.blobs[:8]:
+            cv2.circle(vis, (int(round(blob.u)), int(round(blob.v))), 4, (255, 120, 0), 1)
 
     if result.selected is not None:
         for i, (u, v) in enumerate(result.selected):

@@ -1,3 +1,47 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 本地工具 / IDE
 .claude/
+.idea/
+.vscode/
+.codegraph/
+.cursor/
+
+# JetArm marker 实验数据（bag 录制与导出帧，体积大、无需版本管理）
+data/jetarm_marker/bags/
+data/jetarm_marker/exports/
+data/jetarm_marker/ir_detection/
+data/jetarm_marker/ir_depth_pose/
+data/jetarm_marker/tracking/
+
+# IMU 校准日志
+imu_calibration_logs/
+
+# 媒体与表格数据
+*.csv
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.bmp
+*.tiff
+
+# ROS bag / 本地数据库
+*.db3
+*.db
+*.db-wal
+*.db-shm

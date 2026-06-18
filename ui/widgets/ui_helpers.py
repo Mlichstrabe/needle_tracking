@@ -1,5 +1,5 @@
 """Shared UI helpers for PyQt panels."""
-from PyQt5.QtWidgets import QLabel, QScrollArea, QWidget, QFrame
+from PyQt5.QtWidgets import QLabel, QScrollArea, QWidget, QFrame, QSizePolicy
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPalette, QColor
 
@@ -48,11 +48,13 @@ def apply_panel_chrome(widget: QWidget, bg="#101722") -> None:
 
 
 def configure_side_scroll(scroll: QScrollArea, content: QWidget) -> None:
-    """避免 QScrollArea 默认白底割裂侧栏。"""
+    """侧栏滚动区：顶对齐，避免内容少时沉底。"""
     scroll.setObjectName("SideScroll")
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.NoFrame)
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    scroll.setAlignment(Qt.AlignLeft | Qt.AlignTop)
     scroll.setAutoFillBackground(False)
     apply_panel_chrome(scroll, "#101722")
 
@@ -61,5 +63,6 @@ def configure_side_scroll(scroll: QScrollArea, content: QWidget) -> None:
     apply_panel_chrome(viewport, "#101722")
 
     content.setObjectName("SidePanelContent")
+    content.setSizePolicy(content.sizePolicy().horizontalPolicy(), QSizePolicy.Minimum)
     apply_panel_chrome(content, "#101722")
     scroll.setWidget(content)

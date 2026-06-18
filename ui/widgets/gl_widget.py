@@ -1,5 +1,4 @@
 """3D可视化组件 - 支持模拟穿刺显示"""
-from PyQt5 import QtGui
 import numpy as np
 import pyqtgraph.opengl as gl
 from PyQt5.QtWidgets import QFrame, QVBoxLayout
@@ -8,6 +7,10 @@ from PyQt5.QtGui import QVector3D, QMatrix4x4
 
 class GLVisualizationWidget(QFrame):
     """基于PyQtGraph的3D可视化组件"""
+
+    DEFAULT_CAMERA_DISTANCE = 220
+    DEFAULT_CAMERA_ELEVATION = 25
+    DEFAULT_CAMERA_AZIMUTH = 45
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -19,8 +22,12 @@ class GLVisualizationWidget(QFrame):
 
         # 3D视图
         self.view = gl.GLViewWidget()
-        self.view.setCameraPosition(distance=220, elevation=25, azimuth=45)
-        self.view.opts['distance'] = 220
+        self.view.setCameraPosition(
+            distance=self.DEFAULT_CAMERA_DISTANCE,
+            elevation=self.DEFAULT_CAMERA_ELEVATION,
+            azimuth=self.DEFAULT_CAMERA_AZIMUTH,
+        )
+        self.view.opts['distance'] = self.DEFAULT_CAMERA_DISTANCE
         fmt = self.view.format()
         fmt.setSamples(0)
         self.view.setFormat(fmt)
@@ -52,7 +59,11 @@ class GLVisualizationWidget(QFrame):
         self._box_update_confirmed = False
         self._traj_threshold_sq = 16.0
 
+        self._tip_box_half = np.array([2.5, 2.5, 2.5], dtype=float)
+        self._imu_box_half = np.array([2.0, 2.0, 2.0], dtype=float)
+
         # 初始化场景
+        self.axes = None
         self._init_scene()
         self._init_objects()
         self._init_simulation_objects()
@@ -65,33 +76,26 @@ class GLVisualizationWidget(QFrame):
         print("[GL] 性能优化已启用")
 
     def _init_scene(self):
-        """初始化场景"""
-        axes = gl.GLAxisItem()
-        axes.setSize(150, 150, 150)
-        self.view.addItem(axes)
+        """初始化场景：水平网格 + 坐标轴（视觉不旋转，Z 向上为地面）。"""
+        self.axes = gl.GLAxisItem()
+        self.axes.setSize(150, 150, 150)
+        self.view.addItem(self.axes)
 
-        grid_lines = self._create_grid(400, 40)
-        self.grid = gl.GLLinePlotItem(
-            pos=grid_lines,
-            color=(1, 1, 1, 0.3),
-            width=1,
-            mode='lines'
-        )
+        # PyQtGraph 默认 GLGridItem 在 XZ 平面；绕 X 转 90° → XY 地面（Z 向上）
+        self.grid = gl.GLGridItem()
+        self.grid.setSize(x=400, y=400, z=1)
+        self.grid.setSpacing(x=40, y=40, z=40)
+        self.grid.rotate(90, 1, 0, 0)
         self.view.addItem(self.grid)
 
-    def _create_grid(self, size, spacing):
-        """创建网格线数据"""
-        lines = []
-        half = size / 2
-        for i in np.arange(-half, half + spacing, spacing):
-            lines.append([[-half, i, 0], [half, i, 0]])
-            lines.append([[i, -half, 0], [i, half, 0]])
-        return np.array(lines).reshape(-1, 3)
+    def apply_scene_orientation(self):
+        """scene_z_ccw_deg 只作用于 IMU 针向（kinematics），不旋转 3D 网格/坐标轴。"""
+        pass
 
     def _init_objects(self):
         """初始化基础绘制对象"""
         self.needle_line = gl.GLLinePlotItem(
-            pos=np.array([[0, 0, 0], [0, 0, -100]], dtype=np.float32),
+            pos=np.array([[0, 0, 0], [0, 0, -200]], dtype=np.float32),
             color=(1, 1, 1, 1),
             width=5,
             antialias=True,
@@ -123,6 +127,28 @@ class GLVisualizationWidget(QFrame):
 
         print("[GL] 针杆线条已创建（白色，5px）")
         print("[GL] 立方体标记已创建（针尖5mm红色，IMU4mm绿色）")
+
+    def _set_box_center(self, box, center, half_size):
+        """GLBoxItem 顶点从原点延伸，translate 使方块几何中心落在 center。"""
+        c = np.asarray(center, dtype=float).reshape(3)
+        h = np.asarray(half_size, dtype=float).reshape(3)
+        transform = QMatrix4x4()
+        transform.translate(float(c[0] - h[0]), float(c[1] - h[1]), float(c[2] - h[2]))
+        box.setTransform(transform)
+
+    def _needle_endpoints(self):
+        """针体直线两端：针尖（tip）与针尾（IMU）。"""
+        if not hasattr(self, '_needle_direction') or self._needle_direction is None:
+            direction = np.array([0.0, 0.0, -1.0], dtype=float)
+        else:
+            direction = np.asarray(self._needle_direction, dtype=float).reshape(3)
+            n = float(np.linalg.norm(direction))
+            if n > 1e-9:
+                direction = direction / n
+        tip = np.asarray(self.tip_position, dtype=float).reshape(3)
+        nl = float(getattr(self, "needle_length", 200.0))
+        tail = tip - direction * nl
+        return tip, tail
 
     def _init_simulation_objects(self):
         """初始化模拟穿刺相关的3D对象"""
@@ -174,7 +200,7 @@ class GLVisualizationWidget(QFrame):
             # 重新计算 imu_pos（保持针体长度不变）
             if hasattr(self, '_needle_direction') and self._needle_direction is not None:
                 direction = np.array(self._needle_direction)
-                nl = float(getattr(self, "needle_length", 162.0))
+                nl = float(getattr(self, "needle_length", 200.0))
                 imu_pos = [
                     tip_pos[0] - direction[0] * nl,
                     tip_pos[1] - direction[1] * nl,
@@ -214,38 +240,7 @@ class GLVisualizationWidget(QFrame):
         self.imu_position = np.array(imu_pos, dtype=np.float32)
         self.tip_position = np.array(tip_pos, dtype=np.float32)
 
-        # 更新立方体位置
-        try:
-            tip_transform = QMatrix4x4()
-            tip_transform.translate(
-                float(self.tip_position[0]),
-                float(self.tip_position[1]),
-                float(self.tip_position[2]) + 2.5
-            )
-            self.tip_box.setTransform(tip_transform)
-
-            imu_transform = QMatrix4x4()
-            imu_transform.translate(
-                float(self.imu_position[0]),
-                float(self.imu_position[1]),
-                float(self.imu_position[2])
-            )
-            self.imu_box.setTransform(imu_transform)
-        except Exception as e:
-            if not self._box_error_shown:
-                self._box_error_shown = True
-                print(f"[GL 错误] 立方体更新失败: {e}")
-
-        # 更新针杆线条
-        if self.needle_line is not None:
-            try:
-                needle_data = np.array([
-                    self.tip_position,
-                    self.imu_position
-                ], dtype=np.float32)
-                self.needle_line.setData(pos=needle_data)
-            except Exception as e:
-                print(f"[GL 错误] 针杆线条更新失败: {e}")
+        self._update_needle_visualization()
 
         #  固定针尖模式下，不记录轨迹
         if not (hasattr(self, '_use_fixed_tip') and self._use_fixed_tip):
@@ -420,18 +415,20 @@ class GLVisualizationWidget(QFrame):
 
     def reset_view(self, clear_trajectory=False):
         """重置视角"""
+        dist = self.DEFAULT_CAMERA_DISTANCE
+        elev = self.DEFAULT_CAMERA_ELEVATION
+        azim = self.DEFAULT_CAMERA_AZIMUTH
         if clear_trajectory:
             self.view.opts['center'] = QVector3D(0, 0, 0)
-            self.view.setCameraPosition(distance=200, elevation=25, azimuth=45)
             self.tip_positions = []
             self.trajectory_line.setData(pos=np.zeros((1, 3)))
             if hasattr(self, '_camera_adjusted'):
                 delattr(self, '_camera_adjusted')
-        else:
-            self.view.setCameraPosition(distance=220, elevation=25, azimuth=45)
+        self.view.setCameraPosition(distance=dist, elevation=elev, azimuth=azim)
+        self.view.opts['distance'] = dist
 
     def reset_camera(self):
-        self.view.setCameraPosition(distance=220, elevation=25, azimuth=45)
+        self.reset_view(clear_trajectory=False)
 
     def fit_view_to_center(self, center, extent=None):
         """按模型包围盒自动设置相机，保证完整看到头部模型。"""
@@ -594,32 +591,20 @@ class GLVisualizationWidget(QFrame):
         print(f"[GL] ✓ 针尖固定位置已设置: {self.tip_position}")
 
     def _update_needle_visualization(self):
-        """更新针体可视化（根据当前位置和方向）"""
-        # 如果还没有方向数据，使用默认方向（竖直向下）
-        if not hasattr(self, '_needle_direction') or self._needle_direction is None:
-            direction = np.array([0, 0, -1], dtype=float)
-        else:
-            direction = self._needle_direction
+        """更新针体：白线两端 + 方块中心落在端点。"""
+        tip, tail = self._needle_endpoints()
+        self.imu_position = tail.astype(np.float32)
 
-        nl = float(getattr(self, "needle_length", 162.0))
+        if self.needle_line is not None:
+            self.needle_line.setData(pos=np.array([tip, tail], dtype=np.float32))
 
-        # 计算针体末端位置
-        needle_end = self.tip_position - direction * nl
-
-        # 更新针体线条
-        self.needle_line.setData(pos=np.array([
-            self.tip_position,
-            needle_end
-        ]))
-
-        # 更新针尖立方体位置
-        self.tip_box.resetTransform()
-        self.tip_box.translate(*self.tip_position)
-
-        # 更新IMU立方体位置（针尾 / IMU 盒）
-        imu_position = self.tip_position - direction * nl
-        self.imu_box.resetTransform()
-        self.imu_box.translate(*imu_position)
+        try:
+            self._set_box_center(self.tip_box, tip, self._tip_box_half)
+            self._set_box_center(self.imu_box, tail, self._imu_box_half)
+        except Exception as e:
+            if not self._box_error_shown:
+                self._box_error_shown = True
+                print(f"[GL 错误] 立方体更新失败: {e}")
 
     def update_needle_direction(self, direction):
         """更新针体方向（保持针尖位置不变）"""
@@ -666,17 +651,5 @@ class GLVisualizationWidget(QFrame):
             self._use_fixed_tip = False
 
         self._update_needle_visualization()
-
-        try:
-            self.tip_box.resetTransform()
-            self.tip_box.translate(float(tip[0]), float(tip[1]), float(tip[2]))
-            nl = float(getattr(self, "needle_length", 162.0))
-            imu_pos = tip - axis * nl
-            self.imu_box.resetTransform()
-            self.imu_box.translate(float(imu_pos[0]), float(imu_pos[1]), float(imu_pos[2]))
-            if self.needle_line is not None:
-                self.needle_line.setData(pos=np.array([tip, imu_pos], dtype=np.float32))
-        except Exception:
-            pass
 
         self._last_marker_confidence = float(confidence)

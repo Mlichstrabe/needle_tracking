@@ -28,6 +28,14 @@ from core.imu_kinematics import (
     needle_axis_for_position,
     needle_axis_scene_normalized,
     needle_body_angle_deg,
+    needle_body_bias_deg,
+    scene_z_ccw_deg,
+    needle_tilt_from_scene_down_deg,
+    capture_vertical_display_offset,
+    clear_display_offset,
+    display_offset_dict,
+    display_offset_enabled,
+    quat_slerp,
     tip_position_from_fixed,
 )
 from ui.widgets.gl_widget import GLVisualizationWidget
@@ -41,8 +49,7 @@ from ui.widgets.puncture_point_selector import PuncturePointSelector
 from ui.widgets.simulation_panel import SimulationPanel
 from ui.widgets.workflow_stepper import WorkflowStepBar
 from ui.widgets.alignment_hud import AlignmentHudPanel
-from ui.widgets.prep_sidebar import PrepSidebar
-from ui.widgets.ui_helpers import configure_side_scroll, set_label_role
+from ui.widgets.ui_helpers import configure_side_scroll, set_label_role, apply_panel_chrome
 
 
 class MainWindow(QMainWindow):
@@ -58,26 +65,29 @@ class MainWindow(QMainWindow):
 
         self._init_core_components()
         self._init_ui()
-        self._connect_signals()
-        self._load_imu_geometry()
-        self._init_timers()
-        self._apply_window_geometry()
 
-        self._current_quaternion = [1, 0, 0, 0]
-        self._current_euler = [0, 0, 0]
-        self._last_needle_direction = np.array([0, 0, -1])
-        self._needle_direction = [0, 0, -1]
-        self._smooth_enabled = True
-        self._smooth_alpha = 0.25
-
-        self._cached_imu_pos = np.zeros(3)
-        self._cached_tip_pos = np.zeros(3)
-
+        self._ui_ready = False
         self.puncture_selector = None
         self.puncture_point = None
         self.puncture_normal = None
         self._ct_model_loaded = False
         self._operation_mode = DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
+
+        self._current_quaternion = [1, 0, 0, 0]
+        self._current_euler = [0, 0, 0]
+        self._last_needle_direction = np.array([0, 0, -1])
+        self._needle_direction = [0, 0, -1]
+        self._smooth_enabled = False
+        self._smooth_alpha = 0.25
+        self._smooth_quat = None
+
+        self._cached_imu_pos = np.zeros(3)
+        self._cached_tip_pos = np.zeros(3)
+
+        self._connect_signals()
+        self._load_imu_geometry()
+        self._init_timers()
+        self._apply_window_geometry()
 
         self.alignment_timer = QTimer(self)
         self.alignment_timer.setInterval(100)
@@ -85,14 +95,16 @@ class MainWindow(QMainWindow):
 
         self._refresh_workflow_steps()
         self._apply_operation_mode_ui()
+        self._ui_ready = True
         print("✓ 主窗口初始化完成")
 
     def _is_observe_mode(self):
-        return self.connection_panel.get_operation_mode() == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE
+        return self._operation_mode == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE
 
     def _apply_operation_mode_ui(self):
+        mode = self.connection_panel.get_operation_mode()
+        self._operation_mode = mode
         observe = self._is_observe_mode()
-        self._operation_mode = self.connection_panel.get_operation_mode()
         self.puncture_panel.set_observe_mode(observe, self._ct_model_loaded)
         self.sim_panel.set_training_enabled(not observe)
         connected = self.device_manager.is_connected
@@ -113,8 +125,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         root = QVBoxLayout(central)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(10)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
         root.addWidget(self._create_app_header())
 
         body = QHBoxLayout()
@@ -125,9 +137,9 @@ class MainWindow(QMainWindow):
         self._splitter.addWidget(self._create_left_panel())
         self._splitter.addWidget(self._create_center_panel())
         self._splitter.addWidget(self._create_right_panel())
-        self._splitter.setStretchFactor(0, 0)
-        self._splitter.setStretchFactor(1, 1)
-        self._splitter.setStretchFactor(2, 0)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 3)
+        self._splitter.setStretchFactor(2, 1)
         self._splitter.setCollapsible(0, False)
         self._splitter.setCollapsible(2, False)
 
@@ -138,8 +150,8 @@ class MainWindow(QMainWindow):
         header = QFrame()
         header.setObjectName("AppHeader")
         outer = QVBoxLayout(header)
-        outer.setContentsMargins(12, 8, 12, 8)
-        outer.setSpacing(6)
+        outer.setContentsMargins(10, 6, 10, 6)
+        outer.setSpacing(4)
 
         top = QHBoxLayout()
         title = QLabel("手术探针定位系统")
@@ -168,50 +180,79 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.gl_widget)
         return panel
 
+    def _make_left_block(self, title: str, body: QWidget) -> QFrame:
+        """左栏分区：标题 + 内容。"""
+        block = QFrame()
+        block.setObjectName("PrepSection")
+        apply_panel_chrome(block)
+        block_layout = QVBoxLayout(block)
+        block_layout.setContentsMargins(0, 0, 0, 0)
+        block_layout.setSpacing(0)
+
+        hdr = QLabel(title)
+        hdr.setObjectName("LeftBlockTitle")
+        block_layout.addWidget(hdr)
+
+        body_wrap = QFrame()
+        body_wrap.setObjectName("PrepSectionBody")
+        apply_panel_chrome(body_wrap, "#0e141e")
+        body_layout = QVBoxLayout(body_wrap)
+        body_layout.setContentsMargins(8, 6, 8, 8)
+        body_layout.setSpacing(4)
+
+        body.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        body_layout.addWidget(body)
+
+        block_layout.addWidget(body_wrap)
+        return block
+
     def _create_left_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(260)
-        panel.setMaximumWidth(340)
+        panel.setMinimumWidth(320)
 
-        scroll = QScrollArea()
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(8, 8, 8, 8)
-        content_layout.setSpacing(8)
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
 
         prep_title = QLabel("准备")
         prep_title.setObjectName("SectionTitle")
-        content_layout.addWidget(prep_title)
+        outer.addWidget(prep_title)
 
-        self.ct_panel = CTModelPanel()
         self.connection_panel = DeviceConnectionPanel()
+        self.ct_panel = CTModelPanel()
         self.imu_panel = IMUDataPanel()
 
-        self._prep_sidebar = PrepSidebar()
-        self._prep_sidebar.add_section("影像 · DICOM", self.ct_panel, expanded=True)
-        self._prep_sidebar.add_section("设备 · 串口", self.connection_panel, expanded=False)
-        self._prep_sidebar.add_section("遥测 · IMU", self.imu_panel, expanded=False)
-        content_layout.addWidget(self._prep_sidebar)
-        content_layout.addStretch()
+        scroll = QScrollArea()
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(8)
 
-        configure_side_scroll(scroll, content)
+        scroll_layout.addWidget(
+            self._make_left_block("设备 · 串口", self.connection_panel)
+        )
+        scroll_layout.addWidget(
+            self._make_left_block("影像 · DICOM", self.ct_panel)
+        )
+        scroll_layout.addWidget(
+            self._make_left_block("遥测 · IMU", self.imu_panel)
+        )
 
-        outer = QVBoxLayout(panel)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
+        configure_side_scroll(scroll, scroll_content)
+
+        outer.addWidget(scroll, 1)
         return panel
 
     def _create_right_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(280)
-        panel.setMaximumWidth(380)
+        panel.setMinimumWidth(260)
 
         scroll = QScrollArea()
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
         layout.setContentsMargins(8, 8, 8, 8)
 
         self.alignment_hud = AlignmentHudPanel()
@@ -222,7 +263,6 @@ class MainWindow(QMainWindow):
 
         self.sim_panel = SimulationPanel()
         layout.addWidget(self.sim_panel)
-        layout.addStretch()
 
         configure_side_scroll(scroll, content)
 
@@ -236,11 +276,9 @@ class MainWindow(QMainWindow):
             states = ["pending", "pending", "pending", "pending"]
             if not self.device_manager.is_connected:
                 states[2] = "active"
-                self._prep_sidebar.set_active_section(1)
             else:
                 states[2] = "done"
                 states[3] = "active"
-                self._prep_sidebar.set_active_section(2)
             self.workflow_bar.set_states(states)
             return
 
@@ -251,16 +289,13 @@ class MainWindow(QMainWindow):
             states[0] = "done"
             if self.puncture_point is None:
                 states[1] = "active"
-                self._prep_sidebar.set_active_section(0)
             else:
                 states[1] = "done"
                 if not self.device_manager.is_connected:
                     states[2] = "active"
-                    self._prep_sidebar.set_active_section(1)
                 else:
                     states[2] = "done"
                     states[3] = "active"
-                    self._prep_sidebar.set_active_section(2)
         self.workflow_bar.set_states(states)
 
     def _update_header_status(self):
@@ -280,39 +315,38 @@ class MainWindow(QMainWindow):
         """按当前屏幕可用区域设置窗口大小，避免超出显示器导致面板被裁切。"""
         screen = QApplication.primaryScreen()
         if screen is None:
-            self.setMinimumSize(960, 640)
-            self.resize(1100, 720)
+            self.setMinimumSize(1024, 680)
+            self.resize(1280, 800)
             return
 
         avail = screen.availableGeometry()
-        margin = 24
-        max_w = max(800, avail.width() - margin)
-        max_h = max(560, avail.height() - margin)
+        margin = 16
+        max_w = max(900, avail.width() - margin)
+        max_h = max(600, avail.height() - margin)
 
-        min_w = min(960, max_w)
-        min_h = min(640, max_h)
+        min_w = min(1024, max_w)
+        min_h = min(680, max_h)
         self.setMinimumSize(min_w, min_h)
 
-        target_w = int(min(max_w, max(min_w, avail.width() * 0.88)))
-        target_h = int(min(max_h, max(min_h, avail.height() * 0.88)))
+        target_w = int(min(max_w, max(min_w, avail.width() * 0.94)))
+        target_h = int(min(max_h, max(min_h, avail.height() * 0.94)))
         self.resize(target_w, target_h)
 
         frame = self.frameGeometry()
         frame.moveCenter(avail.center())
         self.move(frame.topLeft())
 
-        side_total = max(target_w - 80, 600)
-        self._splitter.setSizes([
-            int(side_total * 0.22),
-            int(side_total * 0.58),
-            int(side_total * 0.20),
-        ])
+        left_w = int(max(320, target_w * 0.28))
+        right_w = int(max(260, target_w * 0.24))
+        center_w = max(420, target_w - left_w - right_w)
+        self._splitter.setSizes([left_w, center_w, right_w])
 
     def showEvent(self, event):
         super().showEvent(event)
         if not getattr(self, "_geometry_applied_on_show", False):
             self._apply_window_geometry()
             self._geometry_applied_on_show = True
+            self._refresh_workflow_steps()
 
     def _connect_signals(self):
         self.device_manager.data_received.connect(self._on_device_data)
@@ -326,9 +360,11 @@ class MainWindow(QMainWindow):
         self.connection_panel.calibration_clicked.connect(self._on_calibration_requested)
         self.connection_panel.operation_mode_changed.connect(self._on_operation_mode_changed)
 
-        # IMU 映射/平滑（用于修正镜像与跳变）
-        self.imu_panel.axis_mapping_changed.connect(self._on_axis_mapping_changed)
+        # IMU 平滑 / 场景安装标定
         self.imu_panel.smoothing_changed.connect(self._on_smoothing_changed)
+        self.imu_panel.vertical_calibrate_clicked.connect(self._on_vertical_calibrate)
+        self.imu_panel.vertical_recalibrate_clicked.connect(self._on_vertical_recalibrate)
+        self.imu_panel.reset_view_clicked.connect(self._on_reset_view)
 
         self.sim_panel.simulation_started.connect(self._on_simulation_started)
         self.sim_panel.simulation_stopped.connect(self._on_simulation_stopped)
@@ -356,6 +392,9 @@ class MainWindow(QMainWindow):
         self._display_fps = 0
 
     def _on_operation_mode_changed(self, mode):
+        if not getattr(self, "_ui_ready", False):
+            return
+        self._operation_mode = mode
         if self.device_manager.is_connected:
             self.device_manager.disconnect()
         self._apply_operation_mode_ui()
@@ -363,7 +402,19 @@ class MainWindow(QMainWindow):
         label = "姿态观察" if mode == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE else "穿刺训练"
         print(f"[Main] 工作模式已切换: {label}")
 
-    def _on_serial_connect(self, port, baudrate):
+    def _on_serial_connect(self, port, baudrate, mode):
+        self._operation_mode = mode or DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
+        if (
+            self._operation_mode == DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
+            and self.puncture_point is None
+        ):
+            QMessageBox.warning(
+                self,
+                "请先选择 Entry",
+                "穿刺训练模式下需先加载 CT 并选择 Entry 点，再连接 IMU。\n\n"
+                "若只想查看针体姿态，请将工作模式切换为「姿态观察（仅看针体）」。",
+            )
+            return
         if not self.device_manager.connect(port, baudrate):
             QMessageBox.warning(self, "连接失败", f"无法连接到 {port}")
 
@@ -429,38 +480,51 @@ class MainWindow(QMainWindow):
         return imu_pos, tip_pos
 
     def _update_needle_direction_fast(self, quaternion):
-        direction = needle_axis_scene_normalized(quaternion)
+        q_raw = np.asarray(quaternion, dtype=float).reshape(4)
+        if self._smooth_enabled:
+            if self._smooth_quat is None:
+                self._smooth_quat = q_raw.copy()
+            else:
+                self._smooth_quat = quat_slerp(self._smooth_quat, q_raw, self._smooth_alpha)
+            q_use = self._smooth_quat
+        else:
+            q_use = q_raw
+            self._smooth_quat = q_raw.copy()
+
+        direction = needle_axis_scene_normalized(q_use.tolist())
         if direction is not None:
             new_d = np.asarray(direction, dtype=float)
-            new_n = float(np.linalg.norm(new_d))
-            if new_n > 1e-9:
-                new_d = new_d / new_n
-            if self._smooth_enabled and self._last_needle_direction is not None:
-                prev = np.asarray(self._last_needle_direction, dtype=float)
-                prev_n = float(np.linalg.norm(prev))
-                if prev_n > 1e-9:
-                    prev = prev / prev_n
-                a = float(self._smooth_alpha)
-                blended = (1.0 - a) * prev + a * new_d
-                b_n = float(np.linalg.norm(blended))
-                if b_n > 1e-9:
-                    new_d = blended / b_n
+            n = float(np.linalg.norm(new_d))
+            if n > 1e-9:
+                new_d = new_d / n
             self._needle_direction = new_d.tolist()
-            self._last_needle_direction = np.array(self._needle_direction)
+            self._last_needle_direction = new_d.copy()
         self.gl_widget.update_needle_direction(self._needle_direction)
 
     def _load_imu_geometry(self):
-        """启动时从 config/imu_geometry.json 恢复针轴角与场景映射。"""
+        """启动时从 config/imu_geometry.json 恢复针轴几何与场景安装标定。"""
         self._imu_geometry_loading = True
         try:
             cfg = load_config()
             apply_kinematics(cfg)
             self.imu_panel.apply_settings(cfg)
+            self.imu_panel.set_vertical_calibrate_status(display_offset_enabled())
+            if cfg.get("needle_length_mm"):
+                self.needle_length = float(cfg["needle_length_mm"])
+                self.gl_widget.needle_length = self.needle_length
+            self.gl_widget.apply_scene_orientation()
+            smooth = cfg.get("smoothing", {})
+            self._smooth_enabled = bool(smooth.get("enabled", False))
+            self._smooth_alpha = float(smooth.get("alpha", 0.25))
+            self._smooth_quat = None
             print(
                 "[Main] IMU 几何已加载: "
-                f"针轴={needle_body_angle_deg():.1f}°, "
-                f"yaw偏置={cfg['scene_mapping'].get('yaw_offset_deg', 0.0):.0f}°"
+                f"针轴={needle_body_angle_deg():.1f}°(顺时针), "
+                f"针长={self.needle_length:.0f}mm, "
+                f"竖直标定={'已设置' if display_offset_enabled() else '未设置'}"
             )
+        except Exception as exc:
+            print(f"[Main] ⚠ IMU 几何配置未加载，使用默认值: {exc}")
         finally:
             self._imu_geometry_loading = False
 
@@ -469,20 +533,44 @@ class MainWindow(QMainWindow):
             return
         cfg = load_config()
         cfg["needle_body_angle_deg"] = needle_body_angle_deg()
-        cfg["scene_mapping"] = self.imu_panel.scene_mapping_dict()
+        cfg["needle_body_bias_deg"] = needle_body_bias_deg()
+        cfg["scene_z_ccw_deg"] = scene_z_ccw_deg()
+        cfg["needle_length_mm"] = float(self.needle_length)
+        cfg["display_offset"] = display_offset_dict()
         cfg["smoothing"] = self.imu_panel.smoothing_dict()
         save_config(cfg)
 
-    def _on_axis_mapping_changed(self, swap_xy: bool, sx: float, sy: float, sz: float, yaw_offset_deg: float):
-        from core.imu_kinematics import set_scene_mapping, set_scene_yaw_offset_deg
+    def _on_vertical_calibrate(self):
+        if not self.device_manager.is_connected:
+            QMessageBox.warning(self, "未连接", "请先连接 IMU 后再做竖直校准。")
+            return
+        capture_vertical_display_offset(self._current_quaternion)
+        self._smooth_quat = None
+        self._update_needle_direction_fast(self._current_quaternion)
+        imu_pos, tip_pos = self._calculate_positions_fast(self._current_quaternion)
+        self.gl_widget.update_data(imu_pos, tip_pos)
+        self._persist_imu_geometry()
+        self.imu_panel.set_vertical_calibrate_status(True)
+        tilt = needle_tilt_from_scene_down_deg(self._needle_direction)
+        QMessageBox.information(
+            self,
+            "竖直标定完成",
+            f"已将当前针轴映射到场景竖直向下 (0,0,-1)。\n\n"
+            f"标定后偏竖直角 ≈ {tilt:.1f}°\n"
+            f"请转动手柄验证 3D 针体是否跟手。",
+        )
 
-        set_scene_mapping(swap_xy=swap_xy, sx=sx, sy=sy, sz=sz)
-        set_scene_yaw_offset_deg(yaw_offset_deg)
+    def _on_vertical_recalibrate(self):
+        clear_display_offset()
+        self._smooth_quat = None
+        if self.device_manager.is_connected:
+            self._update_needle_direction_fast(self._current_quaternion)
         self._persist_imu_geometry()
 
     def _on_smoothing_changed(self, enabled: bool, alpha: float):
         self._smooth_enabled = bool(enabled)
         self._smooth_alpha = float(alpha)
+        self._smooth_quat = None
         self._persist_imu_geometry()
 
     def _stop_alignment_monitoring(self):
@@ -576,6 +664,8 @@ class MainWindow(QMainWindow):
     def _update_panels(self):
         self.imu_panel.update_quaternion(self._current_quaternion)
         self.imu_panel.update_euler(self._current_euler)
+        tilt = needle_tilt_from_scene_down_deg(self._needle_direction)
+        self.imu_panel.update_needle_scene(self._needle_direction, tilt)
 
         if self.device_manager.is_connected:
             self.imu_panel.set_status(True, self._display_fps)
@@ -636,6 +726,9 @@ class MainWindow(QMainWindow):
             self.ct_loader_thread.quit()
             self.ct_loader_thread.wait()
 
+        self._apply_operation_mode_ui()
+        self._refresh_workflow_steps()
+
     def _on_ct_failed(self, error_msg):
         print(f"[Main] ✗ CT模型加载失败: {error_msg}")
         self.ct_panel.set_loading(False)
@@ -648,6 +741,10 @@ class MainWindow(QMainWindow):
         self.gl_widget.clear_head_model()
         self.ct_panel.set_model_loaded(False)
         self._ct_model_loaded = False
+        self.puncture_point = None
+        self.puncture_normal = None
+        self.puncture_panel.clear()
+        self._apply_operation_mode_ui()
         self._refresh_workflow_steps()
         print("[Main] ✓ CT模型已清除")
 
@@ -678,6 +775,14 @@ class MainWindow(QMainWindow):
         )
 
     def _on_start_selection(self):
+        if self._is_observe_mode():
+            QMessageBox.information(
+                self,
+                "当前为观察模式",
+                "选择 Entry 需使用「穿刺训练」模式。\n\n"
+                "请在左侧「设备 · 串口」中将工作模式切换为「穿刺训练（需 CT + Entry）」。",
+            )
+            return
         print("[Main] 🎯 开始选择穿刺点模式")
         if not self.puncture_selector:
             print("[Main] ✗ 选择器未初始化")

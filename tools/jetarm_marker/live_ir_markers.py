@@ -54,6 +54,7 @@ def run_preview(
   params: DetectParams,
   enforce_match_gate: bool,
   window_name: str,
+  show_candidate_dots: bool = False,
 ) -> int:
   tracker = MarkerTracker(params=params)
   cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -68,7 +69,7 @@ def run_preview(
       fps = 0.9 * fps + 0.1 * (1.0 / dt)
 
     result = tracker.process(gray, enforce_match_gate=enforce_match_gate)
-    vis = draw_live_overlay(result, fps=fps)
+    vis = draw_live_overlay(result, fps=fps, show_candidate_dots=show_candidate_dots)
     cv2.imshow(window_name, vis)
 
     key = cv2.waitKey(1) & 0xFF
@@ -92,15 +93,16 @@ def main() -> int:
   parser.add_argument("--port", type=int, default=8765)
   parser.add_argument("bag_dir", nargs="?", type=Path, help="--source bag 时必填")
   parser.add_argument("--threshold-percentile", type=float, default=98.5)
-  parser.add_argument("--min-area", type=float, default=12.0)
+  parser.add_argument("--min-area", type=float, default=24.0)
   parser.add_argument("--max-area", type=float, default=1800.0)
-  parser.add_argument("--min-circularity", type=float, default=0.15)
+  parser.add_argument("--min-circularity", type=float, default=0.18)
   parser.add_argument("--edge-margin", type=int, default=14)
   parser.add_argument("--max-match-px", type=float, default=70.0)
   parser.add_argument("--min-axis-ratio", type=float, default=0.55, help="m1 几何门控阈值")
   parser.add_argument("--max-rom-rms-mm", type=float, default=22.0, help="ROM 边长拟合 RMS 上限（mm）")
   parser.add_argument("--no-rom", action="store_true", help="禁用 ROM 匹配，回退 spread 启发式")
   parser.add_argument("--enforce-match-gate", action="store_true")
+  parser.add_argument("--show-candidates", action="store_true", help="绘制全部候选亮斑（调试用）")
   args = parser.parse_args()
 
   params = DetectParams(
@@ -137,6 +139,7 @@ def main() -> int:
       params=params,
       enforce_match_gate=args.enforce_match_gate,
       window_name=title,
+      show_candidate_dots=args.show_candidates,
     )
   except KeyboardInterrupt:
     return 0

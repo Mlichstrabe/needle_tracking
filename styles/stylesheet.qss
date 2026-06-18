@@ -197,6 +197,12 @@ QPushButton[variant="primary"]:hover {
     background: #22a86d;
 }
 
+QPushButton[variant="primary"]:disabled {
+    background: #111722;
+    color: #5e6b79;
+    border-color: #202b3a;
+}
+
 QPushButton[variant="danger"] {
     background: #b84252;
     border-color: #e86b7b;
@@ -291,6 +297,26 @@ QFrame#PrepSectionBody {
     border: none;
     border-top: 1px solid #243246;
     border-radius: 0 0 8px 8px;
+}
+
+QLabel#LeftBlockTitle {
+    color: #5ec8f0;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 8px 10px 6px 10px;
+    background: #151d2a;
+    border-radius: 8px 8px 0 0;
+}
+
+QSplitter#LeftPrepSplitter::handle {
+    background: #1a2535;
+    height: 4px;
+    margin: 2px 8px;
+    border-radius: 2px;
+}
+
+QSplitter#LeftPrepSplitter::handle:hover {
+    background: #3d5578;
 }
 
 QPushButton#PrepSectionHeader {

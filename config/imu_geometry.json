@@ -1,0 +1,21 @@
+{
+  "version": 3,
+  "needle_body_angle_deg": 121.0,
+  "needle_body_bias_deg": 7.7,
+  "scene_z_ccw_deg": 135.0,
+  "needle_angle_clockwise_from_x": true,
+  "needle_length_mm": 200.0,
+  "display_offset": {
+    "enabled": false,
+    "rotation": [
+      [1.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0],
+      [0.0, 0.0, 1.0]
+    ]
+  },
+  "smoothing": {
+    "enabled": false,
+    "alpha": 0.25
+  },
+  "notes": "needle_body_bias_deg 针轴偏置；scene_z_ccw_deg 场景绕 Z 逆时针旋转（度）。"
+}

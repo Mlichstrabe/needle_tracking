@@ -29,8 +29,10 @@ def _apply_hint_state(label, text, state="default"):
 class IMUDataPanel(QWidget):
     """IMU 遥测（手风琴内嵌，无 GroupBox 外框）"""
 
-    axis_mapping_changed = pyqtSignal(bool, float, float, float, float)  # swap_xy, sx, sy, sz, yaw_offset_deg
     smoothing_changed = pyqtSignal(bool, float)  # enabled, alpha
+    vertical_calibrate_clicked = pyqtSignal()
+    vertical_recalibrate_clicked = pyqtSignal()
+    reset_view_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -61,13 +63,62 @@ class IMUDataPanel(QWidget):
         status_row.addWidget(self.fps_label)
         layout.addWidget(status_frame)
 
-        # 欧拉角（主读数）
+        # 芯片原始欧拉角（0x53，非针尖场景方向）
         layout.addWidget(self._build_metric_card(
-            "欧拉角",
+            "芯片欧拉角",
             ["Roll", "Pitch", "Yaw"],
             "euler_labels",
             suffix="°",
-        ))  # value role from QSS
+        ))
+        chip_hint = QLabel("模块自身坐标系；针尖竖直向下时此处未必接近 ±90°")
+        chip_hint.setWordWrap(True)
+        set_label_role(chip_hint, "muted")
+        layout.addWidget(chip_hint)
+
+        layout.addWidget(self._build_metric_card(
+            "针轴方向 · 场景系",
+            ["X", "Y", "Z"],
+            "needle_axis_labels",
+            suffix="",
+        ))
+        self.tilt_label = QLabel("偏竖直 ↓: --")
+        self.tilt_label.setObjectName("NeedleTiltReadout")
+        set_label_role(self.tilt_label, "value")
+        layout.addWidget(self.tilt_label)
+
+        self._cal_block = QWidget()
+        cal_layout = QVBoxLayout(self._cal_block)
+        cal_layout.setContentsMargins(0, 0, 0, 0)
+        cal_layout.setSpacing(6)
+
+        cal_row = QHBoxLayout()
+        self.btn_vertical_calibrate = QPushButton("竖直校准")
+        self.btn_vertical_calibrate.setToolTip(
+            "将针体竖直持握（针尖向下），保持静止约 1 秒后点击。"
+        )
+        set_button_variant(self.btn_vertical_calibrate, "secondary")
+        self.btn_vertical_calibrate.clicked.connect(self.vertical_calibrate_clicked.emit)
+        cal_row.addWidget(self.btn_vertical_calibrate, 1)
+
+        self.btn_reset_view = QPushButton("重置视角")
+        self.btn_reset_view.setToolTip("恢复默认 3D 相机角度")
+        set_button_variant(self.btn_reset_view, "ghost")
+        self.btn_reset_view.clicked.connect(self.reset_view_clicked.emit)
+        cal_row.addWidget(self.btn_reset_view)
+        cal_layout.addLayout(cal_row)
+
+        self.vertical_calibrate_status = QLabel("竖直标定：未设置（建议标定一次）")
+        set_label_role(self.vertical_calibrate_status, "muted")
+        cal_layout.addWidget(self.vertical_calibrate_status)
+        layout.addWidget(self._cal_block)
+
+        self.btn_recalibrate = QToolButton()
+        self.btn_recalibrate.setText("重新竖直校准")
+        self.btn_recalibrate.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.btn_recalibrate.setAutoRaise(True)
+        self.btn_recalibrate.clicked.connect(self._on_recalibrate_clicked)
+        self.btn_recalibrate.setVisible(False)
+        layout.addWidget(self.btn_recalibrate)
 
         quat_card = QFrame()
         quat_card.setObjectName("MetricCard")
@@ -106,43 +157,8 @@ class IMUDataPanel(QWidget):
         layout.addWidget(self._quat_toggle)
         layout.addWidget(self._quat_card)
 
-        self.chk_mirror_lr = QCheckBox("左右镜像修正（3D 针体与实物同向）")
-        self.chk_mirror_lr.setChecked(True)
-        self.chk_mirror_lr.setToolTip(
-            "若左右仍反向，取消勾选；若前后反向或上下反向，请用下方开关继续调。"
-        )
-        self.chk_mirror_lr.toggled.connect(self._emit_axis_mapping)
-        layout.addWidget(self.chk_mirror_lr)
-
-        self.chk_mirror_fb = QCheckBox("前后翻转（有时是这个反向）")
-        self.chk_mirror_fb.setChecked(True)
-        self.chk_mirror_fb.toggled.connect(self._emit_axis_mapping)
-        layout.addWidget(self.chk_mirror_fb)
-
-        self.chk_mirror_ud = QCheckBox("上下翻转（仅在上下颠倒时打开）")
-        self.chk_mirror_ud.setChecked(True)
-        self.chk_mirror_ud.toggled.connect(self._emit_axis_mapping)
-        layout.addWidget(self.chk_mirror_ud)
-
-        self.chk_swap_xy = QCheckBox("交换 X/Y（转动方向怪、或 45°像 90° 时尝试）")
-        self.chk_swap_xy.setChecked(False)
-        self.chk_swap_xy.toggled.connect(self._emit_axis_mapping)
-        layout.addWidget(self.chk_swap_xy)
-
-        yaw_row = QHBoxLayout()
-        yaw_row.addWidget(QLabel("水平偏置"))
-        self.combo_yaw_off = QComboBox()
-        self.combo_yaw_off.addItem("0°", 0.0)
-        self.combo_yaw_off.addItem("+90°", 90.0)
-        self.combo_yaw_off.addItem("-90°", -90.0)
-        self.combo_yaw_off.addItem("180°", 180.0)
-        self.combo_yaw_off.setToolTip("交换XY后仍固定偏 90° 时，用这里一键消掉偏差。")
-        self.combo_yaw_off.currentIndexChanged.connect(lambda *_: self._emit_axis_mapping())
-        yaw_row.addWidget(self.combo_yaw_off, 1)
-        layout.addLayout(yaw_row)
-
-        self.chk_smooth = QCheckBox("方向平滑（抑制乱飘/跳变）")
-        self.chk_smooth.setChecked(True)
+        self.chk_smooth = QCheckBox("四元数平滑（默认关，更跟手）")
+        self.chk_smooth.setChecked(False)
         self.chk_smooth.toggled.connect(self._emit_smoothing)
         layout.addWidget(self.chk_smooth)
 
@@ -157,7 +173,7 @@ class IMUDataPanel(QWidget):
         smooth_row.addWidget(self.combo_smooth, 1)
         layout.addLayout(smooth_row)
 
-        hint = QLabel("映射与平滑会自动保存到 config/imu_geometry.json")
+        hint = QLabel("标定与平滑设置自动保存到 config/imu_geometry.json")
         set_label_role(hint, "muted")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -169,15 +185,6 @@ class IMUDataPanel(QWidget):
                 combo.setCurrentIndex(i)
                 return
 
-    def scene_mapping_dict(self) -> dict:
-        return {
-            "mirror_lr": self.chk_mirror_lr.isChecked(),
-            "mirror_fb": self.chk_mirror_fb.isChecked(),
-            "mirror_ud": self.chk_mirror_ud.isChecked(),
-            "swap_xy": self.chk_swap_xy.isChecked(),
-            "yaw_offset_deg": float(self.combo_yaw_off.currentData()),
-        }
-
     def smoothing_dict(self) -> dict:
         return {
             "enabled": self.chk_smooth.isChecked(),
@@ -185,44 +192,20 @@ class IMUDataPanel(QWidget):
         }
 
     def apply_settings(self, cfg: dict) -> None:
-        """从 config/imu_geometry.json 恢复 UI，并同步到主窗口。"""
-        sm = cfg.get("scene_mapping", {})
+        """从 config/imu_geometry.json 恢复 UI。"""
         smooth = cfg.get("smoothing", {})
 
-        widgets = (
-            self.chk_mirror_lr,
-            self.chk_mirror_fb,
-            self.chk_mirror_ud,
-            self.chk_swap_xy,
-            self.chk_smooth,
-            self.combo_yaw_off,
-            self.combo_smooth,
-        )
+        widgets = (self.chk_smooth, self.combo_smooth)
         for widget in widgets:
             widget.blockSignals(True)
         try:
-            self.chk_mirror_lr.setChecked(bool(sm.get("mirror_lr", True)))
-            self.chk_mirror_fb.setChecked(bool(sm.get("mirror_fb", True)))
-            self.chk_mirror_ud.setChecked(bool(sm.get("mirror_ud", True)))
-            self.chk_swap_xy.setChecked(bool(sm.get("swap_xy", False)))
-            self._set_combo_by_data(self.combo_yaw_off, float(sm.get("yaw_offset_deg", 0.0)))
-            self.chk_smooth.setChecked(bool(smooth.get("enabled", True)))
+            self.chk_smooth.setChecked(bool(smooth.get("enabled", False)))
             self._set_combo_by_data(self.combo_smooth, float(smooth.get("alpha", 0.25)))
         finally:
             for widget in widgets:
                 widget.blockSignals(False)
 
-        self._emit_axis_mapping()
         self._emit_smoothing()
-
-    def _emit_axis_mapping(self, *_):
-        # sx: 左右，sy: 前后，sz: 上下
-        sx = -1.0 if self.chk_mirror_lr.isChecked() else 1.0
-        sy = -1.0 if self.chk_mirror_fb.isChecked() else 1.0
-        sz = -1.0 if self.chk_mirror_ud.isChecked() else 1.0
-        swap_xy = self.chk_swap_xy.isChecked()
-        yaw_off = float(self.combo_yaw_off.currentData())
-        self.axis_mapping_changed.emit(swap_xy, sx, sy, sz, yaw_off)
 
     def _emit_smoothing(self, *_):
         enabled = self.chk_smooth.isChecked()
@@ -279,6 +262,53 @@ class IMUDataPanel(QWidget):
             for i, val in enumerate(euler[:3]):
                 self.euler_labels[i].setText(f"{val:.1f}°")
 
+    def update_needle_scene(self, direction, tilt_deg):
+        """更新针尖在场景系中的单位方向与相对竖直向下的偏角。"""
+        if direction is None or len(direction) < 3:
+            for label in self.needle_axis_labels:
+                label.setText("--")
+            self.tilt_label.setText("偏竖直 ↓: --")
+            set_label_role(self.tilt_label, "muted")
+            return
+
+        for i, val in enumerate(direction[:3]):
+            self.needle_axis_labels[i].setText(f"{float(val):+.3f}")
+
+        if tilt_deg != tilt_deg:  # NaN
+            self.tilt_label.setText("偏竖直 ↓: --")
+            set_label_role(self.tilt_label, "muted")
+            return
+
+        self.tilt_label.setText(f"偏竖直 ↓: {tilt_deg:.1f}°")
+        if tilt_deg < 3.0:
+            set_label_role(self.tilt_label, "ok")
+        elif tilt_deg < 10.0:
+            set_label_role(self.tilt_label, "warn")
+        else:
+            set_label_role(self.tilt_label, "danger")
+
+    def _show_calibration_ui(self):
+        self._cal_block.setVisible(True)
+        self.btn_recalibrate.setVisible(False)
+        self.vertical_calibrate_status.setText("竖直标定：请重新持握竖直后点击上方按钮")
+        set_label_role(self.vertical_calibrate_status, "warn")
+
+    def _on_recalibrate_clicked(self):
+        self._show_calibration_ui()
+        self.vertical_recalibrate_clicked.emit()
+
+    def set_vertical_calibrate_status(self, enabled: bool):
+        if enabled:
+            self.vertical_calibrate_status.setText("竖直标定：已设置")
+            set_label_role(self.vertical_calibrate_status, "ok")
+            self._cal_block.setVisible(False)
+            self.btn_recalibrate.setVisible(True)
+        else:
+            self.vertical_calibrate_status.setText("竖直标定：未设置（建议标定一次）")
+            set_label_role(self.vertical_calibrate_status, "muted")
+            self._cal_block.setVisible(True)
+            self.btn_recalibrate.setVisible(False)
+
     def set_status(self, connected, fps=0):
         if connected:
             set_label_role(self.status_dot, "ok")
@@ -301,7 +331,7 @@ class DeviceConnectionPanel(QWidget):
     MODE_PUNCTURE_TRAINING = "puncture_training"
     MODE_NEEDLE_OBSERVE = "needle_observe"
 
-    connect_clicked = pyqtSignal(str, int)
+    connect_clicked = pyqtSignal(str, int, str)
     disconnect_clicked = pyqtSignal()
     calibration_clicked = pyqtSignal()
     operation_mode_changed = pyqtSignal(str)
@@ -424,8 +454,15 @@ class DeviceConnectionPanel(QWidget):
     def _on_connect(self):
         """点击连接按钮"""
         port = self.port_combo.currentData()
-        if port:
-            self.connect_clicked.emit(port, 115200)
+        if not port:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                "未选择串口",
+                "没有可用串口，或当前选项无效。\n请检查 USB 连接后点击「↻」刷新。",
+            )
+            return
+        self.connect_clicked.emit(port, 115200, self.get_operation_mode())
 
     def set_connected(self, connected):
         """设置连接状态
@@ -629,6 +666,8 @@ class PuncturePointPanel(QFrame):
 
     def set_selecting_mode(self, selecting):
         """设置选择模式"""
+        if getattr(self, "_observe_mode", False):
+            return
         if selecting:
             _apply_hint_state(
                 self.hint_label,
@@ -661,14 +700,23 @@ class PuncturePointPanel(QFrame):
             label.setText("--")
         self.normal_label.setText("--")
 
-        _apply_hint_state(
-            self.hint_label,
-            "CT 模型已加载，可以开始选择穿刺点",
-            "success",
-        )
+        if getattr(self, "_observe_mode", False):
+            _apply_hint_state(
+                self.hint_label,
+                "观察模式：切换到「穿刺训练」后可选择 Entry",
+                "default",
+            )
+            self.start_btn.setVisible(True)
+            self.start_btn.setEnabled(False)
+        else:
+            _apply_hint_state(
+                self.hint_label,
+                "CT 模型已加载，可以开始选择穿刺点",
+                "success",
+            )
+            self.start_btn.setVisible(True)
+            self.start_btn.setEnabled(True)
 
-        self.start_btn.setVisible(True)
-        self.start_btn.setEnabled(True)
         self.coord_widget.setVisible(False)
         self.reselect_btn.setVisible(False)
 
