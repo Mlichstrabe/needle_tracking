@@ -11,11 +11,11 @@
 - **版本定位**：**无配准** — 不做 CT↔患者刚性配准；连接 IMU 后**针尖固定在 Entry**，仅根据四元数更新针体姿态与 IMU 位置
 - **入口**：`main.py` → `ui.main_window.MainWindow`
 
-### JetArm marker 实验线（临时代替 Aimooe 位移验证）
+### JetArm marker 实验线（支线，不接主窗口）
 
-与上文 IMU 主路径**并行**，代码在 `tools/jetarm_marker/`，数据在 `data/jetarm_marker/`。  
-**Cursor 进度真相源**：[docs/jetarm_marker/STATUS.md](docs/jetarm_marker/STATUS.md)  
-当前：**IR 检测 + IR/depth 链路已跑通**；下一步是**实时 IR 2D 窗口**，不是继续盲录 bag 或实时 3D。
+与 IMU 主路径**并行、独立**；代码在 `tools/jetarm_marker/`，数据在 `data/jetarm_marker/`。  
+**主程序**不加载 `anchor_imu_needle.json`，针长仅来自 `config/imu_geometry.json` → `MainWindow.needle_length` → `gl_widget.needle_length`。  
+支线进度：[docs/jetarm_marker/STATUS.md](docs/jetarm_marker/STATUS.md)。
 
 ---
 
@@ -100,8 +100,7 @@ flowchart LR
 | `imu_pos` | `imu_position_from_tip(tip, dir, needle_length)` | 针尾 / IMU 盒 |
 | `target_direction_world` | Entry→Target 单位向量 | 对准误差 |
 
-**针长**：`MainWindow.needle_length` 默认 **162.0** mm。  
-**已知不一致**：`gl_widget.update_data` 在 `_use_fixed_tip` 分支内仍写死 `needle_length = 100.0` — 修改针长逻辑时须一并修正。
+**针长**：`config/imu_geometry.json` 的 `needle_length_mm` → `MainWindow.needle_length` → `gl_widget.needle_length`（`_sync_needle_length_to_gl`）；位置计算与固定针尖分支均用 `self.needle_length` / `gl_widget.needle_length`。
 
 ---
 
@@ -171,7 +170,7 @@ flowchart LR
 | 选穿刺点 | `puncture_point_selector.py`, `MainWindow._on_puncture_*` |
 | CT 加载性能/质量 | `core/dicom_loader.py` |
 | 新按钮/面板 | `panels.py` + `main_window` 布局与 `_connect_signals` |
-| Target 可交互选择 | `main_window._on_ct_loaded` + `gl_widget` 新标记 |
+| Target 可交互选择 | `PuncturePointPanel` + `PuncturePointSelector.MODE_TARGET` + `main_window._on_*_target*` |
 
 ---
 

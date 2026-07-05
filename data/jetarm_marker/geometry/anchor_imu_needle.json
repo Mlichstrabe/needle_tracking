@@ -1,0 +1,22 @@
+{
+  "anchor_marker": "m1",
+  "axis_start_marker": 3,
+  "axis_end_marker": 1,
+  "tip_anchor_marker": 1,
+  "tip_offset_mm": 141.0,
+  "m2_to_tip_mm": 141.0,
+  "needle_length_mm": 162.0,
+  "imu_to_tip_mm": null,
+  "max_jump_px": 80.0,
+  "max_hold_frames": 10,
+  "depth_half_window": 13,
+  "min_depth_pixels": 3,
+  "z_min_mm": 50.0,
+  "z_max_mm": 2000.0,
+  "notes": "hybrid：平移=m1深度+tip_offset；姿态=IMU。marker：针轴 m3→m1 定轴+tip。",
+  "hybrid_translation_anchor": "m1",
+  "modes": {
+    "observe": { "max_hold_frames": 10 },
+    "puncture": { "max_hold_frames": 3 }
+  }
+}

@@ -33,6 +33,7 @@ from tools.jetarm_marker.ir_marker_detect import (  # noqa: E402
     draw_live_overlay,
     ir_array_to_u8,
 )
+from tools.jetarm_marker.anchor_geometry import load_anchor_geometry  # noqa: E402
 from tools.jetarm_marker.live_pose_estimate import (  # noqa: E402
     _markers_3d_from_uv,
     estimate_live_needle_pose,
@@ -82,8 +83,8 @@ def draw_depth_panel(
                 label = f"m{i}: {z:.0f}mm ({npx}px)" + (" OK" if ok else " FAIL")
             cv2.putText(vis, label, (ui + 12, vi - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
         p0, p1, p2, p3 = detect.selected
-        cv2.line(vis, tuple(p0.astype(int)), tuple(p3.astype(int)), (200, 200, 200), 1)
-        cv2.line(vis, tuple(p2.astype(int)), tuple(p1.astype(int)), (200, 200, 200), 1)
+        cv2.line(vis, tuple(p0.astype(int)), tuple(p2.astype(int)), (200, 200, 200), 1)
+        cv2.line(vis, tuple(p3.astype(int)), tuple(p1.astype(int)), (0, 255, 180), 2)
     cv2.putText(vis, "DEPTH (magenta=invalid)", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
     return vis
 
@@ -118,6 +119,9 @@ def run_compare(
     depth_half_window: int,
     min_depth_pixels: int,
     tip_offset_mm: float,
+    needle_length_mm: float,
+    axis_start_marker: int,
+    axis_end_marker: int,
     window_name: str,
 ) -> int:
     tracker = MarkerTracker(params=params)
@@ -151,9 +155,12 @@ def run_compare(
                 detect,
                 frame.depth,
                 depth_info,
+                axis_start_marker=axis_start_marker,
+                axis_end_marker=axis_end_marker,
+                tip_offset_mm=tip_offset_mm,
+                needle_length_mm=needle_length_mm,
                 depth_half_window=win,
                 min_depth_pixels=min_depth_pixels,
-                tip_offset_mm=tip_offset_mm,
             )
 
         ir_panel = draw_live_overlay(detect, fps=fps)
@@ -213,9 +220,15 @@ def main() -> int:
     parser.add_argument("bag_dir", nargs="?", type=Path)
     parser.add_argument("--depth-half-window", type=int, default=13, help="depth 中值窗口半径（离线默认同）")
     parser.add_argument("--min-depth-pixels", type=int, default=3)
-    parser.add_argument("--tip-offset-mm", type=float, default=140.0)
+    parser.add_argument("--tip-offset-mm", type=float, default=None)
     parser.add_argument("--threshold-percentile", type=float, default=98.5)
     args = parser.parse_args()
+
+    anchor = load_anchor_geometry()
+    tip_mm = float(args.tip_offset_mm if args.tip_offset_mm is not None else anchor["tip_offset_mm"])
+    needle_mm = float(anchor["needle_length_mm"])
+    axis_start = int(anchor.get("axis_start_marker", 3))
+    axis_end = int(anchor.get("axis_end_marker", 1))
 
     params = DetectParams(threshold_percentile=args.threshold_percentile)
     depth_info = load_depth_camera_info()
@@ -242,7 +255,10 @@ def main() -> int:
         depth_info=depth_info,
         depth_half_window=args.depth_half_window,
         min_depth_pixels=args.min_depth_pixels,
-        tip_offset_mm=args.tip_offset_mm,
+        tip_offset_mm=tip_mm,
+        needle_length_mm=needle_mm,
+        axis_start_marker=axis_start,
+        axis_end_marker=axis_end,
         window_name=title,
     )
 

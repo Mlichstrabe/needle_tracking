@@ -67,10 +67,18 @@ class FrameDetectResult:
     geometry_valid: bool = False
     rom_rms_mm: Optional[float] = None
     candidate_count: int = 0
+    track_mode: str = "none"  # "4pt" | "anchor" | "none"
+    anchor_marker: int = 1
 
     @property
     def frame_valid(self) -> bool:
         return self.selected is not None and self.track_valid and self.geometry_valid
+
+    @property
+    def anchor_uv(self) -> Optional[np.ndarray]:
+        if self.selected is None or self.selected.shape[0] <= self.anchor_marker:
+            return None
+        return self.selected[self.anchor_marker]
 
 
 @dataclass
@@ -78,6 +86,9 @@ class MarkerTracker:
     params: DetectParams = field(default_factory=DetectParams)
     rom: Optional[BracketRom] = None
     previous: Optional[np.ndarray] = None
+    anchor_marker: int = 1
+    anchor_fallback: bool = True
+    anchor_max_match_px: float = 95.0
 
     def __post_init__(self) -> None:
         if self.params.use_rom and self.rom is None:
@@ -86,11 +97,54 @@ class MarkerTracker:
             except OSError:
                 self.rom = None
 
+    def _anchor_only_track(self, blobs: List[Blob]) -> Optional[np.ndarray]:
+        if self.previous is None or self.previous.shape[0] <= self.anchor_marker:
+            return None
+        if not blobs:
+            return None
+        prev_a = self.previous[self.anchor_marker]
+        best_i = min(
+            range(len(blobs)),
+            key=lambda i: float(np.hypot(blobs[i].u - prev_a[0], blobs[i].v - prev_a[1])),
+        )
+        d = float(np.hypot(blobs[best_i].u - prev_a[0], blobs[best_i].v - prev_a[1]))
+        if d > self.anchor_max_match_px:
+            return None
+        out = self.previous.copy()
+        out[self.anchor_marker] = np.array([blobs[best_i].u, blobs[best_i].v], dtype=np.float64)
+        return out
+
+    def _nearest_labeled_track(self, blobs: List[Blob]) -> Optional[np.ndarray]:
+        """ROM 失败时：按上一帧标签最近邻跟四点（晃动手柄时比单点 anchor 稳）。"""
+        if self.previous is None or self.previous.shape[0] < 4 or not blobs:
+            return None
+        used: set = set()
+        pts: List[np.ndarray] = []
+        max_px = self.params.max_match_px * 1.35
+        for i in range(4):
+            prev = self.previous[i]
+            best_j: Optional[int] = None
+            best_d = max_px
+            for j, b in enumerate(blobs):
+                if j in used:
+                    continue
+                d = float(np.hypot(b.u - prev[0], b.v - prev[1]))
+                if d < best_d:
+                    best_d = d
+                    best_j = j
+            if best_j is not None:
+                used.add(best_j)
+                pts.append(np.array([blobs[best_j].u, blobs[best_j].v], dtype=float))
+            else:
+                pts.append(prev.copy())
+        return np.stack(pts, axis=0)
+
     def process(self, gray_u8: np.ndarray, *, enforce_match_gate: bool = True) -> FrameDetectResult:
         blobs = detect_bright_blobs(gray_u8, params=self.params)
         selected: Optional[np.ndarray] = None
         track_valid = False
         rom_rms: Optional[float] = None
+        track_mode = "none"
 
         if self.params.use_rom and self.rom is not None:
             blob_pts = [np.array([b.u, b.v], dtype=np.float64) for b in blobs[: self.params.rom_candidate_limit]]
@@ -113,12 +167,30 @@ class MarkerTracker:
             if match is not None:
                 selected = match.points
                 rom_rms = match.rms_mm
+                track_mode = "4pt"
         else:
             raw = _select_spread_four(blobs, gray_u8.shape)
             if raw is not None:
                 selected, _ = _match_previous_unlabeled(raw, self.previous, self.params.max_match_px)
+                if selected is not None:
+                    track_mode = "4pt"
 
-        if selected is not None:
+        if selected is None and self.anchor_fallback:
+            selected = self._nearest_labeled_track(blobs)
+            if selected is not None:
+                track_mode = "near4"
+                track_valid = True
+                rom_rms = None
+            else:
+                selected = self._anchor_only_track(blobs)
+                if selected is not None:
+                    track_mode = "anchor"
+                    track_valid = True
+                    rom_rms = None
+
+        if selected is not None and track_mode in ("anchor", "near4"):
+            self.previous = selected.copy()
+        elif selected is not None:
             if self.previous is None:
                 track_valid = True
             else:
@@ -148,6 +220,8 @@ class MarkerTracker:
             geometry_valid=geometry_valid,
             rom_rms_mm=rom_rms,
             candidate_count=len(blobs),
+            track_mode=track_mode,
+            anchor_marker=self.anchor_marker,
         )
 
     def reset(self) -> None:
@@ -292,10 +366,11 @@ def _match_previous_unlabeled(
 
 
 def axis_length_ratio_2d(points: Optional[np.ndarray]) -> Optional[float]:
+    """针轴 m3–m1 与横档 m0–m2 的 2D 长度比（与 overlay 白线一致）。"""
     if points is None or points.shape != (4, 2):
         return None
-    cross_len = float(np.linalg.norm(points[0] - points[3]))
-    axis_len = float(np.linalg.norm(points[2] - points[1]))
+    cross_len = float(np.linalg.norm(points[0] - points[2]))
+    axis_len = float(np.linalg.norm(points[3] - points[1]))
     if cross_len <= 1e-9:
         return None
     return axis_len / cross_len
@@ -331,15 +406,16 @@ def draw_live_overlay(
                 2,
             )
         p0, p1, p2, p3 = result.selected
-        cv2.line(vis, tuple(p0.astype(int)), tuple(p3.astype(int)), (180, 180, 180), 1)
-        cv2.line(vis, tuple(p2.astype(int)), tuple(p1.astype(int)), (180, 180, 180), 1)
+        # 横档 m0–m2；针轴 m3–m1（加粗）
+        cv2.line(vis, tuple(p0.astype(int)), tuple(p2.astype(int)), (180, 180, 180), 1)
+        cv2.line(vis, tuple(p3.astype(int)), tuple(p1.astype(int)), (0, 255, 180), 2)
 
     ratio_text = "n/a" if result.axis_length_ratio_2d is None else f"{result.axis_length_ratio_2d:.2f}"
     rom_text = "n/a" if result.rom_rms_mm is None else f"{result.rom_rms_mm:.1f}mm"
     gate = "PASS" if result.geometry_valid else "FAIL"
     track = "ok" if result.track_valid else "jump"
     lines = [
-        f"candidates={result.candidate_count}  track={track}  rom_rms={rom_text}  gate={gate}  ratio={ratio_text}",
+        f"candidates={result.candidate_count}  track={result.track_mode}/{track}  rom_rms={rom_text}  gate={gate}  ratio={ratio_text}",
         f"frame_valid={int(result.frame_valid)}  [q]uit [r]eset [+/-] threshold",
     ]
     if fps is not None:

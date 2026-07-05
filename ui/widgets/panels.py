@@ -1,4 +1,5 @@
 """侧边栏 UI 组件"""
+import numpy as np
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton,
@@ -33,6 +34,7 @@ class IMUDataPanel(QWidget):
     vertical_calibrate_clicked = pyqtSignal()
     vertical_recalibrate_clicked = pyqtSignal()
     reset_view_clicked = pyqtSignal()
+    save_viewport_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,11 +103,20 @@ class IMUDataPanel(QWidget):
         cal_row.addWidget(self.btn_vertical_calibrate, 1)
 
         self.btn_reset_view = QPushButton("重置视角")
-        self.btn_reset_view.setToolTip("恢复默认 3D 相机角度")
+        self.btn_reset_view.setToolTip("恢复 config/viewport.json 中的默认相机")
         set_button_variant(self.btn_reset_view, "ghost")
         self.btn_reset_view.clicked.connect(self.reset_view_clicked.emit)
         cal_row.addWidget(self.btn_reset_view)
         cal_layout.addLayout(cal_row)
+
+        self.btn_save_viewport = QPushButton("设为默认视角")
+        self.btn_save_viewport.setToolTip(
+            "把当前 3D 拖拽后的角度写入 config/viewport.json，"
+            "「重置视角」将回到此方位"
+        )
+        set_button_variant(self.btn_save_viewport, "ghost")
+        self.btn_save_viewport.clicked.connect(self.save_viewport_clicked.emit)
+        cal_layout.addWidget(self.btn_save_viewport)
 
         self.vertical_calibrate_status = QLabel("竖直标定：未设置（建议标定一次）")
         set_label_role(self.vertical_calibrate_status, "muted")
@@ -425,10 +436,10 @@ class DeviceConnectionPanel(QWidget):
                 self.port_combo.addItem(p.device, p.device)
             if self.port_combo.count() == 0:
                 self.port_combo.addItem("(无可用串口)", "")
-            print(f"✓ 扫描到 {self.port_combo.count()} 个串口")
+            print(f"[OK] 扫描到 {self.port_combo.count()} 个串口")
         except ImportError:
             self.port_combo.addItem("COM3", "COM3")  # 降级默认
-            print("⚠ serial.tools.list_ports 不可用，使用默认 COM3")
+            print("[WARN] serial.tools.list_ports 不可用，使用默认 COM3")
 
     def _connect_signals(self):
         """连接内部信号"""
@@ -565,10 +576,13 @@ class CTModelPanel(QWidget):
 
 
 class PuncturePointPanel(QFrame):
-    """穿刺点选择（引导轨紧凑卡片）"""
+    """穿刺点 / Target 选择（引导轨紧凑卡片）"""
 
     start_selection_clicked = pyqtSignal()
     reselect_clicked = pyqtSignal()
+    start_target_selection_clicked = pyqtSignal()
+    reselect_target_clicked = pyqtSignal()
+    use_default_target_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -631,6 +645,58 @@ class PuncturePointPanel(QFrame):
         self.reselect_btn.setVisible(False)
         layout.addWidget(self.reselect_btn)
 
+        target_title = QLabel("② 选择 Target")
+        target_title.setObjectName("SectionTitle")
+        layout.addWidget(target_title)
+
+        self.target_hint_label = QLabel("Entry 选定后可在 3D 上选 Target，或使用默认位置")
+        self.target_hint_label.setWordWrap(True)
+        _apply_hint_state(self.target_hint_label, "Entry 选定后可在 3D 上选 Target，或使用默认位置", "default")
+        layout.addWidget(self.target_hint_label)
+
+        target_btn_row = QHBoxLayout()
+        self.target_pick_btn = QPushButton("在 3D 上选 Target")
+        set_button_variant(self.target_pick_btn, "primary")
+        self.target_pick_btn.clicked.connect(self.start_target_selection_clicked.emit)
+        self.target_pick_btn.setEnabled(False)
+        target_btn_row.addWidget(self.target_pick_btn)
+
+        self.target_default_btn = QPushButton("使用默认")
+        set_button_variant(self.target_default_btn, "ghost")
+        self.target_default_btn.clicked.connect(self.use_default_target_clicked.emit)
+        self.target_default_btn.setEnabled(False)
+        target_btn_row.addWidget(self.target_default_btn)
+        layout.addLayout(target_btn_row)
+
+        self.target_coord_widget = QWidget()
+        tcoord_layout = QVBoxLayout(self.target_coord_widget)
+        tcoord_layout.setContentsMargins(0, 0, 0, 0)
+        tcoord_layout.setSpacing(5)
+        tgrid = QGridLayout()
+        tgrid.setSpacing(5)
+        self.target_coord_labels = {}
+        for i, axis in enumerate(["X", "Y", "Z"]):
+            label = QLabel(f"{axis}:")
+            set_label_role(label, "danger")
+            value = QLabel("--")
+            set_label_role(value, "value-sm")
+            tgrid.addWidget(label, i, 0)
+            tgrid.addWidget(value, i, 1)
+            self.target_coord_labels[axis] = value
+        tcoord_layout.addLayout(tgrid)
+        self.target_depth_label = QLabel("Entry→Target: -- mm")
+        set_label_role(self.target_depth_label, "value-sm")
+        tcoord_layout.addWidget(self.target_depth_label)
+
+        self.target_reselect_btn = QPushButton("重新选择 Target")
+        set_button_variant(self.target_reselect_btn, "ghost")
+        self.target_reselect_btn.clicked.connect(self.reselect_target_clicked.emit)
+        self.target_reselect_btn.setVisible(False)
+        tcoord_layout.addWidget(self.target_reselect_btn)
+
+        self.target_coord_widget.setVisible(False)
+        layout.addWidget(self.target_coord_widget)
+
         step_title = QLabel("① 选择 Entry")
         step_title.setObjectName("SectionTitle")
         layout.insertWidget(0, step_title)
@@ -651,14 +717,21 @@ class PuncturePointPanel(QFrame):
             self.start_btn.setEnabled(False)
 
     def set_observe_mode(self, observe: bool, ct_loaded: bool = False):
-        """观察模式下禁用 Entry 选择。"""
+        """观察模式下禁用 Entry / Target 选择。"""
         self._observe_mode = observe
         if observe:
             self.start_btn.setEnabled(False)
             self.reselect_btn.setEnabled(False)
+            self.target_pick_btn.setEnabled(False)
+            self.target_default_btn.setEnabled(False)
             _apply_hint_state(
                 self.hint_label,
                 "观察模式：切换到「穿刺训练」后可选择 Entry",
+                "default",
+            )
+            _apply_hint_state(
+                self.target_hint_label,
+                "观察模式下无需 Target",
                 "default",
             )
         else:
@@ -693,6 +766,71 @@ class PuncturePointPanel(QFrame):
         self.start_btn.setVisible(False)
         self.coord_widget.setVisible(True)
         self.reselect_btn.setVisible(True)
+
+        if not getattr(self, "_observe_mode", False):
+            self.target_pick_btn.setEnabled(True)
+            self.target_default_btn.setEnabled(True)
+            _apply_hint_state(
+                self.target_hint_label,
+                "在 3D 头部表面点击选 Target，或「使用默认」",
+                "warn",
+            )
+
+    def set_target_selecting_mode(self, selecting: bool):
+        if getattr(self, "_observe_mode", False):
+            return
+        if selecting:
+            _apply_hint_state(
+                self.target_hint_label,
+                "请在 3D 视图中点击头部表面，选择 Target 点",
+                "warn",
+            )
+            self.target_pick_btn.setEnabled(False)
+            self.target_default_btn.setEnabled(False)
+        elif self.coord_widget.isVisible():
+            self.target_pick_btn.setEnabled(True)
+            self.target_default_btn.setEnabled(True)
+
+    def set_target_point(self, point, entry_point=None, from_default: bool = False):
+        p = np.asarray(point, dtype=float).reshape(3)
+        self.target_coord_labels["X"].setText(f"{p[0]:7.2f} mm")
+        self.target_coord_labels["Y"].setText(f"{p[1]:7.2f} mm")
+        self.target_coord_labels["Z"].setText(f"{p[2]:7.2f} mm")
+        if entry_point is not None:
+            e = np.asarray(entry_point, dtype=float).reshape(3)
+            dist = float(np.linalg.norm(p - e))
+            self.target_depth_label.setText(f"Entry→Target: {dist:.1f} mm")
+        else:
+            self.target_depth_label.setText("Entry→Target: -- mm")
+        src = "默认 Target" if from_default else "Target 已选择"
+        _apply_hint_state(self.target_hint_label, src, "success")
+        self.target_coord_widget.setVisible(True)
+        self.target_reselect_btn.setVisible(True)
+        self.target_pick_btn.setVisible(False)
+        self.target_default_btn.setVisible(False)
+
+    def clear_target_display(self):
+        for label in self.target_coord_labels.values():
+            label.setText("--")
+        self.target_depth_label.setText("Entry→Target: -- mm")
+        self.target_coord_widget.setVisible(False)
+        self.target_reselect_btn.setVisible(False)
+        self.target_pick_btn.setVisible(True)
+        self.target_default_btn.setVisible(True)
+        self.target_pick_btn.setEnabled(self.coord_widget.isVisible())
+        self.target_default_btn.setEnabled(self.coord_widget.isVisible())
+        if self.coord_widget.isVisible():
+            _apply_hint_state(
+                self.target_hint_label,
+                "在 3D 头部表面点击选 Target，或「使用默认」",
+                "default",
+            )
+        else:
+            _apply_hint_state(
+                self.target_hint_label,
+                "Entry 选定后可在 3D 上选 Target，或使用默认位置",
+                "default",
+            )
 
     def clear(self):
         """清除显示"""

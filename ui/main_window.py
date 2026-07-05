@@ -52,6 +52,24 @@ from ui.widgets.alignment_hud import AlignmentHudPanel
 from ui.widgets.ui_helpers import configure_side_scroll, set_label_role, apply_panel_chrome
 
 
+def default_intracerebral_hemorrhage_target_mm(bbox):
+    """
+    默认出血靶点：右侧豆状核/基底节区（高血压脑出血最常见部位之一）。
+    头模已几何中心在原点；偏移相对半轴长（解剖：外侧、略前、中线偏上）。
+    """
+    size = np.asarray(bbox["size"], dtype=float).reshape(3)
+    hx, hy, hz = size[0] / 2.0, size[1] / 2.0, size[2] / 2.0
+    # 文献/教学常用：距中线约 25–35 mm；此处按比例适配不同头围
+    return np.array(
+        [
+            0.34 * hx,   # 右半球外侧（豆状核）
+            0.16 * hy,   # 略向额侧
+            0.12 * hz,   # 颅顶–下颌中上部（基底节层面）
+        ],
+        dtype=float,
+    )
+
+
 class MainWindow(QMainWindow):
     """主窗口"""
 
@@ -70,6 +88,10 @@ class MainWindow(QMainWindow):
         self.puncture_selector = None
         self.puncture_point = None
         self.puncture_normal = None
+        self.target_point = None
+        self._default_target_point = None
+        self._ct_model_center = None
+        self._selecting_target = False
         self._ct_model_loaded = False
         self._operation_mode = DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
 
@@ -86,6 +108,7 @@ class MainWindow(QMainWindow):
 
         self._connect_signals()
         self._load_imu_geometry()
+        self._sync_needle_length_to_gl()
         self._init_timers()
         self._apply_window_geometry()
 
@@ -287,15 +310,15 @@ class MainWindow(QMainWindow):
             states[0] = "active"
         else:
             states[0] = "done"
-            if self.puncture_point is None:
+            if self.puncture_point is None or self.target_point is None:
                 states[1] = "active"
+            elif not self.device_manager.is_connected:
+                states[1] = "done"
+                states[2] = "active"
             else:
                 states[1] = "done"
-                if not self.device_manager.is_connected:
-                    states[2] = "active"
-                else:
-                    states[2] = "done"
-                    states[3] = "active"
+                states[2] = "done"
+                states[3] = "active"
         self.workflow_bar.set_states(states)
 
     def _update_header_status(self):
@@ -365,6 +388,7 @@ class MainWindow(QMainWindow):
         self.imu_panel.vertical_calibrate_clicked.connect(self._on_vertical_calibrate)
         self.imu_panel.vertical_recalibrate_clicked.connect(self._on_vertical_recalibrate)
         self.imu_panel.reset_view_clicked.connect(self._on_reset_view)
+        self.imu_panel.save_viewport_clicked.connect(self._on_save_viewport)
 
         self.sim_panel.simulation_started.connect(self._on_simulation_started)
         self.sim_panel.simulation_stopped.connect(self._on_simulation_stopped)
@@ -380,6 +404,13 @@ class MainWindow(QMainWindow):
 
         self.puncture_panel.start_selection_clicked.connect(self._on_start_selection)
         self.puncture_panel.reselect_clicked.connect(self._on_reselect_puncture_point)
+        self.puncture_panel.start_target_selection_clicked.connect(
+            self._on_start_target_selection
+        )
+        self.puncture_panel.reselect_target_clicked.connect(self._on_reselect_target)
+        self.puncture_panel.use_default_target_clicked.connect(
+            self._on_use_default_target
+        )
 
     def _init_timers(self):
         self.panel_update_timer = QTimer()
@@ -404,17 +435,22 @@ class MainWindow(QMainWindow):
 
     def _on_serial_connect(self, port, baudrate, mode):
         self._operation_mode = mode or DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
-        if (
-            self._operation_mode == DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
-            and self.puncture_point is None
-        ):
-            QMessageBox.warning(
-                self,
-                "请先选择 Entry",
-                "穿刺训练模式下需先加载 CT 并选择 Entry 点，再连接 IMU。\n\n"
-                "若只想查看针体姿态，请将工作模式切换为「姿态观察（仅看针体）」。",
-            )
-            return
+        if self._operation_mode == DeviceConnectionPanel.MODE_PUNCTURE_TRAINING:
+            if self.puncture_point is None:
+                QMessageBox.warning(
+                    self,
+                    "请先选择 Entry",
+                    "穿刺训练模式下需先加载 CT 并选择 Entry 与 Target，再连接 IMU。\n\n"
+                    "若只想查看针体姿态，请将工作模式切换为「姿态观察（仅看针体）」。",
+                )
+                return
+            if self.target_point is None:
+                QMessageBox.warning(
+                    self,
+                    "请先选择 Target",
+                    "请在右栏「② 选择 Target」中在 3D 上选点，或点击「使用默认」。",
+                )
+                return
         if not self.device_manager.connect(port, baudrate):
             QMessageBox.warning(self, "连接失败", f"无法连接到 {port}")
 
@@ -475,8 +511,9 @@ class MainWindow(QMainWindow):
             print("[Calculate] ⚠️ fixed_tip 无效，跳过本次计算")
             return np.zeros(3), np.zeros(3)
 
-        needle_length = getattr(self, "needle_length", 100.0)
-        imu_pos = imu_position_from_tip(tip_pos, direction, needle_length)
+        imu_pos = imu_position_from_tip(
+            tip_pos, direction, float(self.needle_length)
+        )
         return imu_pos, tip_pos
 
     def _update_needle_direction_fast(self, quaternion):
@@ -511,7 +548,7 @@ class MainWindow(QMainWindow):
             self.imu_panel.set_vertical_calibrate_status(display_offset_enabled())
             if cfg.get("needle_length_mm"):
                 self.needle_length = float(cfg["needle_length_mm"])
-                self.gl_widget.needle_length = self.needle_length
+            self._sync_needle_length_to_gl()
             self.gl_widget.apply_scene_orientation()
             smooth = cfg.get("smoothing", {})
             self._smooth_enabled = bool(smooth.get("enabled", False))
@@ -527,6 +564,11 @@ class MainWindow(QMainWindow):
             print(f"[Main] ⚠ IMU 几何配置未加载，使用默认值: {exc}")
         finally:
             self._imu_geometry_loading = False
+
+    def _sync_needle_length_to_gl(self):
+        """针长唯一来源：MainWindow.needle_length（由 imu_geometry.json 加载）。"""
+        nl = float(self.needle_length)
+        self.gl_widget.needle_length = nl
 
     def _persist_imu_geometry(self):
         if getattr(self, "_imu_geometry_loading", False):
@@ -593,6 +635,15 @@ class MainWindow(QMainWindow):
 
     def _on_reset_view(self):
         self.gl_widget.reset_view(clear_trajectory=False)
+
+    def _on_save_viewport(self):
+        self.gl_widget.capture_viewport_to_config()
+        QMessageBox.information(
+            self,
+            "默认视角已保存",
+            "当前 3D 相机已写入 config/viewport.json。\n\n"
+            "之后点击「重置视角」将回到此方位。",
+        )
 
     def _on_calibration_requested(self):
         """执行传感器校准序列：磁力计 + 陀螺仪零偏"""
@@ -711,6 +762,7 @@ class MainWindow(QMainWindow):
         if self.puncture_selector is None:
             self.puncture_selector = PuncturePointSelector(self.gl_widget)
             self.puncture_selector.point_selected.connect(self._on_puncture_point_selected)
+            self.puncture_selector.target_selected.connect(self._on_target_point_selected)
 
         self.puncture_selector.set_model(model_data["vertices"], model_data["faces"])
 
@@ -718,9 +770,19 @@ class MainWindow(QMainWindow):
         self._ct_model_loaded = True
         self._refresh_workflow_steps()
 
-        center = model_data["center"]
-        self.target_point = center + np.array([30, -25, 60])
+        center = np.asarray(model_data["center"], dtype=float)
+        self._ct_model_center = center
+        bbox = model_data.get("bbox") or {}
+        self._default_target_point = default_intracerebral_hemorrhage_target_mm(bbox)
+        self.target_point = self._default_target_point.copy()
         self.gl_widget.set_bleeding_point(self.target_point)
+        self.puncture_panel.set_target_point(
+            self.target_point, entry_point=None, from_default=True
+        )
+        print(
+            f"[Main] 默认出血靶点（右豆状核区）: "
+            f"[{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, {self.target_point[2]:.1f}] mm"
+        )
 
         if hasattr(self, "ct_loader_thread"):
             self.ct_loader_thread.quit()
@@ -743,10 +805,132 @@ class MainWindow(QMainWindow):
         self._ct_model_loaded = False
         self.puncture_point = None
         self.puncture_normal = None
+        self.target_point = None
+        self._default_target_point = None
+        self._ct_model_center = None
+        self._selecting_target = False
         self.puncture_panel.clear()
+        self.puncture_panel.clear_target_display()
         self._apply_operation_mode_ui()
         self._refresh_workflow_steps()
         print("[Main] ✓ CT模型已清除")
+
+    def _effective_target(self):
+        if self.target_point is not None:
+            return np.asarray(self.target_point, dtype=float).reshape(3)
+        return None
+
+    def _entry_target_distance_mm(self):
+        tgt = self._effective_target()
+        if tgt is None or self.puncture_point is None:
+            return None
+        entry = np.asarray(self.puncture_point, dtype=float).reshape(3)
+        return float(np.linalg.norm(tgt - entry))
+
+    def _update_target_direction_world(self):
+        if self.puncture_point is None:
+            return
+        tgt = self._effective_target()
+        if tgt is None:
+            return
+        entry = np.asarray(self.puncture_point, dtype=float).reshape(3)
+        vec = tgt - entry
+        n = float(np.linalg.norm(vec))
+        if n < 1e-6:
+            return
+        self.target_direction_world = vec / n
+
+    def _apply_target_to_scene(self, from_default: bool = False):
+        tgt = self._effective_target()
+        if tgt is None:
+            return
+        self.gl_widget.set_bleeding_point(tgt)
+        entry = self.puncture_point
+        if entry is not None:
+            self.gl_widget.set_entry_target_line(entry, tgt)
+        self.puncture_panel.set_target_point(
+            tgt, entry_point=entry, from_default=from_default
+        )
+        self._update_target_direction_world()
+        if (
+            self.device_manager.is_connected
+            and not self._is_observe_mode()
+            and hasattr(self, "target_direction_world")
+        ):
+            self._start_alignment_monitoring()
+
+    def _on_target_point_selected(self, point):
+        print(f"[Main] Target 已选择: {point}")
+        self._selecting_target = False
+        self.target_point = np.asarray(point, dtype=float).reshape(3)
+        if self.puncture_selector:
+            self.puncture_selector.setEnabled(False)
+            self.puncture_selector.set_selection_mode(
+                PuncturePointSelector.MODE_ENTRY
+            )
+        self.puncture_panel.set_target_selecting_mode(False)
+        self._apply_target_to_scene(from_default=False)
+        self._refresh_workflow_steps()
+        dist = self._entry_target_distance_mm()
+        dist_txt = f"{dist:.1f} mm" if dist is not None else "--"
+        QMessageBox.information(
+            self,
+            "Target 已选择",
+            f"Target: [{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, "
+            f"{self.target_point[2]:.1f}] mm\n"
+            f"Entry→Target: {dist_txt}\n\n"
+            f"下一步：连接 IMU 并对准红色 Target。",
+            QMessageBox.Ok,
+        )
+
+    def _on_start_target_selection(self):
+        if self._is_observe_mode():
+            return
+        if self.puncture_point is None:
+            QMessageBox.warning(self, "请先选 Entry", "请先完成 Entry 点选择。")
+            return
+        if not self.puncture_selector:
+            return
+        print("[Main] 开始选择 Target")
+        self._selecting_target = True
+        self.puncture_selector.set_selection_mode(PuncturePointSelector.MODE_TARGET)
+        self.puncture_selector.setEnabled(True)
+        self.puncture_panel.set_target_selecting_mode(True)
+        self.puncture_panel.set_selecting_mode(False)
+
+    def _on_reselect_target(self):
+        print("[Main] 重新选择 Target")
+        self.target_point = None
+        self.gl_widget.set_bleeding_point(None)
+        if self.puncture_point is not None:
+            self.gl_widget.set_entry_target_line(self.puncture_point, None)
+        self.puncture_panel.clear_target_display()
+        self._on_start_target_selection()
+
+    def _on_use_default_target(self):
+        if self._default_target_point is None:
+            QMessageBox.warning(self, "无默认 Target", "CT 模型未提供默认 Target。")
+            return
+        self.target_point = np.asarray(self._default_target_point, dtype=float).reshape(
+            3
+        )
+        self._selecting_target = False
+        if self.puncture_selector:
+            self.puncture_selector.setEnabled(False)
+        self.puncture_panel.set_target_selecting_mode(False)
+        self._apply_target_to_scene(from_default=True)
+        self._refresh_workflow_steps()
+        dist = self._entry_target_distance_mm()
+        dist_txt = f"{dist:.1f} mm" if dist is not None else "--"
+        p = self.target_point
+        QMessageBox.information(
+            self,
+            "已使用默认 Target",
+            f"默认：右侧豆状核/基底节区（相对头模几何中心）\n\n"
+            f"[{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}] mm\n"
+            f"Entry→Target: {dist_txt}",
+            QMessageBox.Ok,
+        )
 
     def _on_puncture_point_selected(self, point, normal):
         print(f"[Main] 📍 穿刺点已选择: {point}")
@@ -755,22 +939,38 @@ class MainWindow(QMainWindow):
         self.puncture_point = point
         self.puncture_normal = normal
 
-        self.gl_widget.set_bleeding_point(self.target_point)
+        self._selecting_target = False
+        if self.target_point is None and self._default_target_point is not None:
+            self.target_point = np.asarray(self._default_target_point, dtype=float).copy()
+
         self.puncture_panel.set_puncture_point(point, normal)
         self.gl_widget.set_puncture_point(point, normal)
-        self.gl_widget.set_entry_target_line(point, self.target_point)
+        if self.target_point is not None:
+            self.gl_widget.set_bleeding_point(self.target_point)
+            self.gl_widget.set_entry_target_line(point, self.target_point)
+            self.puncture_panel.set_target_point(
+                self.target_point, entry_point=point, from_default=True
+            )
+        else:
+            self.gl_widget.set_bleeding_point(None)
+            self.gl_widget.set_entry_target_line(point, None)
+            self.puncture_panel.clear_target_display()
+        self.puncture_panel.set_target_selecting_mode(False)
 
-        self.puncture_selector.setEnabled(False)
+        if self.puncture_selector:
+            self.puncture_selector.setEnabled(False)
+            self.puncture_selector.set_selection_mode(
+                PuncturePointSelector.MODE_ENTRY
+            )
+        self.puncture_panel.set_selecting_mode(False)
         self._refresh_workflow_steps()
 
         QMessageBox.information(
             self,
-            "✓ 穿刺点已选择",
-            f"穿刺点已成功选择！\n\n"
-            f"📍 Entry点: [{point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f}] mm\n"
-            f"🎯 Target点: [{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, {self.target_point[2]:.1f}] mm\n"
-            f"📏 穿刺深度: 80.0 mm\n\n"
-            f"下一步：在左侧「设备连接」中连接串口",
+            "Entry 已选择",
+            f"Entry: [{point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f}] mm\n\n"
+            f"下一步：右侧「② 选择 Target」—\n"
+            f"「在 3D 上选 Target」或「使用默认」，再连接 IMU。",
             QMessageBox.Ok,
         )
 
@@ -787,16 +987,32 @@ class MainWindow(QMainWindow):
         if not self.puncture_selector:
             print("[Main] ✗ 选择器未初始化")
             return
+        self._selecting_target = False
+        self.puncture_selector.set_selection_mode(PuncturePointSelector.MODE_ENTRY)
         self.puncture_selector.setEnabled(True)
         self.puncture_panel.set_selecting_mode(True)
+        self.puncture_panel.set_target_selecting_mode(False)
         self._refresh_workflow_steps()
 
     def _on_reselect_puncture_point(self):
         print("[Main] 🔄 重新选择穿刺点")
         self.puncture_point = None
         self.puncture_normal = None
-        self.gl_widget.clear_puncture_point()
+        self._selecting_target = False
+        self.gl_widget.clear_entry_markers()
+        self.gl_widget.set_entry_target_line(None, None)
         self.puncture_panel.clear()
+        if self._default_target_point is not None:
+            self.target_point = np.asarray(self._default_target_point, dtype=float).copy()
+            self.gl_widget.set_bleeding_point(self.target_point)
+            self.puncture_panel.set_target_point(
+                self.target_point, entry_point=None, from_default=True
+            )
+        else:
+            self.target_point = None
+            self.gl_widget.set_bleeding_point(None)
+            self.puncture_panel.clear_target_display()
+        self._stop_alignment_monitoring()
         self._on_start_selection()
         self._refresh_workflow_steps()
 
@@ -828,6 +1044,7 @@ class MainWindow(QMainWindow):
             self.device_manager.disconnect()
             return
 
+        self._apply_target_to_scene(from_default=False)
         self.gl_widget.set_needle_tip_position(self.puncture_point)
         print(f"[Main] ✓ 针尖位置已设置为Entry点: {self.puncture_point}")
 
@@ -844,8 +1061,10 @@ class MainWindow(QMainWindow):
         self._initial_quaternion = list(self._current_quaternion)
         print(f"[Main] ✓ 初始姿态已记录: {self._initial_quaternion}")
 
-        entry_to_target = self.target_point - self.puncture_point
-        self.target_direction_world = entry_to_target / np.linalg.norm(entry_to_target)
+        self._update_target_direction_world()
+        if not hasattr(self, "target_direction_world"):
+            print("[Main] ⚠ 无 Target，跳过对准方向")
+            return
         print(f"[Main] 目标方向（Entry→Target）: {self.target_direction_world}")
 
         self._start_alignment_monitoring()
@@ -870,6 +1089,8 @@ class MainWindow(QMainWindow):
 
     def _update_alignment(self):
         if self._needle_direction is None:
+            return
+        if not hasattr(self, "target_direction_world"):
             return
 
         current_direction = self._needle_direction

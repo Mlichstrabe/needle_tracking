@@ -156,7 +156,7 @@ def _estimate_axis_and_tip(
 
 
 def _axis_length_ratio_2d(markers: Sequence[Dict[str, Any]]) -> Optional[float]:
-    """用图像上的 m2-m1 / m0-m3 长度比例过滤 m1 误识别。"""
+    """2D 长度比：针轴 m3–m1 / 横档 m0–m2。"""
     if len(markers) < 4:
         return None
     required = [markers[i] for i in (0, 1, 2, 3)]
@@ -166,8 +166,8 @@ def _axis_length_ratio_2d(markers: Sequence[Dict[str, Any]]) -> Optional[float]:
     p1 = np.asarray([markers[1]["u"], markers[1]["v"]], dtype=np.float64)
     p2 = np.asarray([markers[2]["u"], markers[2]["v"]], dtype=np.float64)
     p3 = np.asarray([markers[3]["u"], markers[3]["v"]], dtype=np.float64)
-    cross_len = float(np.linalg.norm(p0 - p3))
-    axis_len = float(np.linalg.norm(p2 - p1))
+    cross_len = float(np.linalg.norm(p0 - p2))
+    axis_len = float(np.linalg.norm(p3 - p1))
     if cross_len <= 1e-9:
         return None
     return axis_len / cross_len
@@ -398,9 +398,9 @@ def main() -> int:
     parser.add_argument("--bag", type=Path, required=True, help="包含 IR 和 depth 话题的 rosbag 目录")
     parser.add_argument("--markers", type=Path, required=True, help="detect_ir_markers.py 输出的 marker CSV")
     parser.add_argument("-o", "--output", type=Path, default=None, help="输出 pose CSV 路径")
-    parser.add_argument("--axis-start-marker", type=int, default=2, help="针轴起点 marker，默认 m2")
-    parser.add_argument("--axis-end-marker", type=int, default=1, help="针轴朝针尖方向的 marker，默认 m1")
-    parser.add_argument("--tip-offset-mm", type=float, default=140.0, help="从 axis-end-marker 沿针轴外推到针尖的距离")
+    parser.add_argument("--axis-start-marker", type=int, default=3, help="针轴起点 marker，默认 m3")
+    parser.add_argument("--axis-end-marker", type=int, default=1, help="针轴朝针尖一侧的 marker，默认 m1")
+    parser.add_argument("--tip-offset-mm", type=float, default=141.0, help="从 m1 球心沿针轴外推到针尖的距离 (mm)")
     parser.add_argument("--needle-length-mm", type=float, default=162.0, help="用于显示的针长")
     parser.add_argument("--depth-half-window", type=int, default=13, help="取深度中位数的半窗口像素")
     parser.add_argument("--min-depth-pixels", type=int, default=3, help="窗口内至少需要的有效深度像素")

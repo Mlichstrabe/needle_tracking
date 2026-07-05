@@ -1,0 +1,8 @@
+﻿{
+  "comment": "elev≈35.26°；azimuth=45（在 135° 基础上顺时针 90°）",
+  "distance": 240,
+  "elevation": 35.26,
+  "azimuth": 45,
+  "center": [0.0, 0.0, 0.0],
+  "fit_ct_distance_only": true
+}

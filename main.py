@@ -2,6 +2,14 @@
 import os
 import sys
 
+# Windows 默认控制台为 GBK，print 含 ✓ 等字符会 UnicodeEncodeError
+if sys.platform == "win32":
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)

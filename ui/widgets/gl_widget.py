@@ -1,16 +1,113 @@
 """3D可视化组件 - 支持模拟穿刺显示"""
+import json
+import os
+
 import numpy as np
 import pyqtgraph.opengl as gl
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QFrame, QVBoxLayout
 from PyQt5.QtGui import QVector3D, QMatrix4x4
+
+
+class PunctureGLViewWidget(gl.GLViewWidget):
+    """在 pyqtgraph 默认鼠标处理之前处理选点左键。"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._puncture_selector = None
+
+    def set_puncture_selector(self, selector):
+        self._puncture_selector = selector
+
+    def mousePressEvent(self, ev):
+        if (
+            self._puncture_selector is not None
+            and ev.button() == Qt.LeftButton
+            and self._puncture_selector.try_pick_from_view_event(ev)
+        ):
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
 
 
 class GLVisualizationWidget(QFrame):
     """基于PyQtGraph的3D可视化组件"""
 
-    DEFAULT_CAMERA_DISTANCE = 220
-    DEFAULT_CAMERA_ELEVATION = 25
+    # 等轴测：视线与 X/Y/Z 夹角均为 45° → elev≈35.26°, azim=45°
+    DEFAULT_CAMERA_DISTANCE = 240
+    DEFAULT_CAMERA_ELEVATION = 35.26
+  # 在 azimuth=135 基础上再绕竖直轴顺时针 90°
     DEFAULT_CAMERA_AZIMUTH = 45
+
+    @staticmethod
+    def _viewport_config_path():
+        root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
+        )
+        return os.path.join(root, "config", "viewport.json")
+
+    def _load_viewport_config(self):
+        path = self._viewport_config_path()
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception as exc:
+            print(f"[GL] 视角配置未加载，使用内置默认: {exc}")
+            return {}
+        return cfg
+
+    def _apply_viewport_preset(self, cfg=None):
+        """应用 config/viewport.json 或内置默认（与床旁对齐的方位）。"""
+        if cfg is None:
+            cfg = self._load_viewport_config()
+        dist = float(cfg.get("distance", self.DEFAULT_CAMERA_DISTANCE))
+        elev = float(cfg.get("elevation", self.DEFAULT_CAMERA_ELEVATION))
+        azim = float(cfg.get("azimuth", self.DEFAULT_CAMERA_AZIMUTH))
+        center = cfg.get("center", [0.0, 0.0, 0.0])
+        if len(center) >= 3:
+            self.view.opts["center"] = QVector3D(
+                float(center[0]), float(center[1]), float(center[2])
+            )
+        self.view.setCameraPosition(distance=dist, elevation=elev, azimuth=azim)
+        self.view.opts["distance"] = dist
+        self._viewport_cfg = cfg
+
+    def capture_viewport_to_config(self):
+        """将当前相机写入 config/viewport.json（调好后点「设为默认视角」）。"""
+        opts = self.view.opts
+        center = opts.get("center")
+        if center is not None:
+            if hasattr(center, "x"):
+                c = [float(center.x()), float(center.y()), float(center.z())]
+            else:
+                c = [float(center[0]), float(center[1]), float(center[2])]
+        else:
+            c = [0.0, 0.0, 0.0]
+        dist = float(opts.get("distance", self.DEFAULT_CAMERA_DISTANCE))
+        elev = float(opts.get("elevation", self.DEFAULT_CAMERA_ELEVATION))
+        azim = float(opts.get("azimuth", self.DEFAULT_CAMERA_AZIMUTH))
+        try:
+            cam = self.view.cameraParams()
+            if cam:
+                dist = float(cam.get("distance", dist))
+                elev = float(cam.get("elevation", elev))
+                azim = float(cam.get("azimuth", azim))
+        except Exception:
+            pass
+        cfg = {
+            "comment": "与床旁观察对齐的默认视角（capture_viewport_to_config 写入）",
+            "distance": dist,
+            "elevation": elev,
+            "azimuth": azim,
+            "center": c,
+            "fit_ct_distance_only": True,
+        }
+        path = self._viewport_config_path()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        self._viewport_cfg = cfg
+        print(f"[GL] 已保存默认视角 → {path}: dist={dist:.0f} elev={elev:.1f} azim={azim:.1f}")
+        return cfg
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -21,13 +118,9 @@ class GLVisualizationWidget(QFrame):
         layout.setContentsMargins(2, 2, 2, 2)
 
         # 3D视图
-        self.view = gl.GLViewWidget()
-        self.view.setCameraPosition(
-            distance=self.DEFAULT_CAMERA_DISTANCE,
-            elevation=self.DEFAULT_CAMERA_ELEVATION,
-            azimuth=self.DEFAULT_CAMERA_AZIMUTH,
-        )
-        self.view.opts['distance'] = self.DEFAULT_CAMERA_DISTANCE
+        self.view = PunctureGLViewWidget()
+        self._viewport_cfg = {}
+        self._apply_viewport_preset()
         fmt = self.view.format()
         fmt.setSamples(0)
         self.view.setFormat(fmt)
@@ -76,17 +169,16 @@ class GLVisualizationWidget(QFrame):
         print("[GL] 性能优化已启用")
 
     def _init_scene(self):
-        """初始化场景：水平网格 + 坐标轴（视觉不旋转，Z 向上为地面）。"""
+        """网格与 GLAxisItem 同处默认 XZ 平面（含蓝/黄轴方向），原点对齐世界系。"""
         self.axes = gl.GLAxisItem()
         self.axes.setSize(150, 150, 150)
         self.view.addItem(self.axes)
 
-        # PyQtGraph 默认 GLGridItem 在 XZ 平面；绕 X 转 90° → XY 地面（Z 向上）
         self.grid = gl.GLGridItem()
         self.grid.setSize(x=400, y=400, z=1)
         self.grid.setSpacing(x=40, y=40, z=40)
-        self.grid.rotate(90, 1, 0, 0)
         self.view.addItem(self.grid)
+        self._sync_grid_axes_transform((0.0, 0.0, 0.0))
 
     def apply_scene_orientation(self):
         """scene_z_ccw_deg 只作用于 IMU 针向（kinematics），不旋转 3D 网格/坐标轴。"""
@@ -179,9 +271,9 @@ class GLVisualizationWidget(QFrame):
         self.bleeding_marker = gl.GLMeshItem(
             meshdata=md_target,
             smooth=True,
-            color=(1, 0, 0, 0.6),  # 红色，90%不透明
+            color=(1, 0.15, 0.15, 1.0),
             shader='shaded',
-            glOptions='additive'
+            glOptions='opaque',
         )
         self.bleeding_marker.setVisible(False)
         self.view.addItem(self.bleeding_marker)
@@ -220,23 +312,7 @@ class GLVisualizationWidget(QFrame):
             except:
                 pass
 
-        if not self._camera_adjusted:
-            self._camera_adjusted = True
-            imu_array = np.array(imu_pos, dtype=np.float32)
-            tip_array = np.array(tip_pos, dtype=np.float32)
-            center = (imu_array + tip_array) / 2
-
-            self.view.opts['center'] = QVector3D(
-                float(center[0]),
-                float(center[1]),
-                float(center[2])
-            )
-
-            span = float(np.linalg.norm(tip_array - imu_array))
-            distance = float(np.clip(max(span * 4.0, 120.0), 120.0, 350.0))
-            self.view.setCameraPosition(distance=distance)
-            self.view.opts['distance'] = distance
-
+        # 不在首帧 IMU 上改相机，避免画面跳变、与手柄转动不同步的错觉
         self.imu_position = np.array(imu_pos, dtype=np.float32)
         self.tip_position = np.array(tip_pos, dtype=np.float32)
 
@@ -414,36 +490,51 @@ class GLVisualizationWidget(QFrame):
         self.trajectory_line.setData(pos=np.zeros((1, 3)))
 
     def reset_view(self, clear_trajectory=False):
-        """重置视角"""
-        dist = self.DEFAULT_CAMERA_DISTANCE
-        elev = self.DEFAULT_CAMERA_ELEVATION
-        azim = self.DEFAULT_CAMERA_AZIMUTH
+        """重置视角为 config/viewport.json（与床旁对齐的默认方位）。"""
         if clear_trajectory:
-            self.view.opts['center'] = QVector3D(0, 0, 0)
             self.tip_positions = []
             self.trajectory_line.setData(pos=np.zeros((1, 3)))
-            if hasattr(self, '_camera_adjusted'):
-                delattr(self, '_camera_adjusted')
-        self.view.setCameraPosition(distance=dist, elevation=elev, azimuth=azim)
-        self.view.opts['distance'] = dist
+            if hasattr(self, "_camera_adjusted"):
+                delattr(self, "_camera_adjusted")
+        self._apply_viewport_preset()
 
     def reset_camera(self):
         self.reset_view(clear_trajectory=False)
 
+    def _sync_grid_axes_transform(self, translate_xyz=(0.0, 0.0, 0.0)):
+        """网格与坐标轴同变换，始终共面（默认 XZ = 蓝/黄轴平面）。"""
+        tx, ty, tz = (float(translate_xyz[0]), float(translate_xyz[1]), float(translate_xyz[2]))
+        self.grid.resetTransform()
+        self.grid.translate(tx, ty, tz)
+        self.axes.resetTransform()
+        self.axes.translate(tx, ty, tz)
+
     def fit_view_to_center(self, center, extent=None):
-        """按模型包围盒自动设置相机，保证完整看到头部模型。"""
+        """加载 CT 后：默认只调距离，方位/俯仰用 viewport.json。"""
         c = np.asarray(center, dtype=float).flatten()[:3]
-        self.view.opts['center'] = QVector3D(float(c[0]), float(c[1]), float(c[2]))
+        cfg = getattr(self, "_viewport_cfg", None) or self._load_viewport_config()
+        fit_dist_only = bool(cfg.get("fit_ct_distance_only", True))
 
-        if extent is not None:
-            ext = np.asarray(extent, dtype=float).flatten()[:3]
-            radius = float(np.linalg.norm(ext) / 2.0)
+        if fit_dist_only:
+            self.view.opts["center"] = QVector3D(float(c[0]), float(c[1]), float(c[2]))
+            if extent is not None:
+                ext = np.asarray(extent, dtype=float).flatten()[:3]
+                radius = float(np.linalg.norm(ext) / 2.0)
+            else:
+                radius = 100.0
+            distance = float(np.clip(radius * 2.2, 160.0, 420.0))
+            elev = float(cfg.get("elevation", self.DEFAULT_CAMERA_ELEVATION))
+            azim = float(cfg.get("azimuth", self.DEFAULT_CAMERA_AZIMUTH))
+            self.view.setCameraPosition(distance=distance, elevation=elev, azimuth=azim)
+            self.view.opts["distance"] = distance
         else:
-            radius = 100.0
-
-        distance = float(np.clip(radius * 2.2, 160.0, 420.0))
-        self.view.setCameraPosition(distance=distance, elevation=22, azimuth=45)
-        self.view.opts['distance'] = distance
+            self._apply_viewport_preset(cfg)
+            if extent is not None:
+                ext = np.asarray(extent, dtype=float).flatten()[:3]
+                radius = float(np.linalg.norm(ext) / 2.0)
+                distance = float(np.clip(radius * 2.2, 160.0, 420.0))
+                self.view.setCameraPosition(distance=distance)
+                self.view.opts["distance"] = distance
         self._camera_adjusted = True
 
     def load_head_model(self, vertices, faces):
@@ -473,9 +564,10 @@ class GLVisualizationWidget(QFrame):
         if len(verts) > 0:
             mn = verts.min(axis=0)
             mx = verts.max(axis=0)
-            center = (mn + mx) / 2.0
             extent = mx - mn
-            self.fit_view_to_center(center, extent)
+            origin = np.zeros(3, dtype=float)
+            self._sync_grid_axes_transform((0.0, 0.0, 0.0))
+            self.fit_view_to_center(origin, extent)
 
         self.update()
 
@@ -512,39 +604,53 @@ class GLVisualizationWidget(QFrame):
         print(f"[GL] ✓ 穿刺点已标记")
         #print(f"[GL] ✓ Entry-Target连线已显示，距离: {distance:.1f} mm")
 
-    def clear_puncture_point(self):
-        """清除穿刺点标记"""
+    def clear_entry_markers(self):
+        """仅清除 Entry 标记与 Entry–Target 连线，保留 Target。"""
         self.puncture_point_marker.setVisible(False)
         self.puncture_point_glow.setVisible(False)
-        self.bleeding_marker.setVisible(False)
 
         if self.entry_target_line is not None:
             self.view.removeItem(self.entry_target_line)
             self.entry_target_line = None
 
+        print("[GL] Entry 标记已清除")
+
+    def clear_puncture_point(self):
+        """清除 Entry 与 Target 及连线。"""
+        self.clear_entry_markers()
+        self.bleeding_marker.setVisible(False)
+        if hasattr(self, "bleeding_point"):
+            self.bleeding_point = None
+
         self.clear_path_lines()
 
-        print("[GL] 穿刺点标记已清除")
+        print("[GL] 穿刺点与 Target 标记已清除")
 
     def set_bleeding_point(self, point):
-        """设置出血点（Target点）位置"""
-        print(f"[GL] 正在标记出血点: {point}")
+        """设置 Target 点位置；point 为 None 时隐藏。"""
+        if point is None:
+            self.bleeding_marker.setVisible(False)
+            if hasattr(self, "bleeding_point"):
+                self.bleeding_point = None
+            return
 
-        self.bleeding_point = np.array(point)
+        print(f"[GL] 正在标记 Target: {point}")
+        self.bleeding_point = np.array(point, dtype=float)
         self.bleeding_marker.resetTransform()
         self.bleeding_marker.translate(*point)
         self.bleeding_marker.setVisible(True)
-
-        print(f"[GL] ✓ 出血点已标记: {point}")
+        print(f"[GL] ✓ Target 已标记: {point}")
 
     def set_entry_target_line(self, entry_point, target_point):
-        """显示Entry-Target连线（蓝色虚线，从Target向Entry方向反向延长）"""
-        print(f"[GL] 正在创建Entry-Target连线（反向延长）")
-
-        # 清除旧的连线
+        """显示 Entry–Target 连线；任一端为 None 时仅清除连线。"""
         if self.entry_target_line is not None:
             self.view.removeItem(self.entry_target_line)
+            self.entry_target_line = None
 
+        if entry_point is None or target_point is None:
+            return
+
+        print(f"[GL] 正在创建 Entry-Target 连线")
         entry = np.array(entry_point, dtype=float)
         target = np.array(target_point, dtype=float)
 

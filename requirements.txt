@@ -1,0 +1,2 @@
+# CT 入针点射线拾取（trimesh.ray 依赖 rtree）
+rtree>=1.0.0

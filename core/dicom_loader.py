@@ -18,7 +18,6 @@ class DicomModelLoader(QObject):
     def __init__(self):
         super().__init__()
 
-        # 质量/速度：裁剪后体素数自适应降采样；仅各向同性，避免比例失真
         self.hu_threshold = -800
         self.simplification_ratio = 0.22
         self.large_mesh_simplification_ratio = 0.13
@@ -68,15 +67,13 @@ class DicomModelLoader(QObject):
 
             self.progress_updated.emit(90, "正在调整方向...")
             vertices = self._rotate_to_z_axis(vertices)
+            vertices = self._rotate_z_clockwise_deg(vertices, 90.0)
 
-            # 使用几何中心
-            bbox = self._calculate_bbox(vertices)
-            ct_center = bbox['center']
-
-            vertices = vertices - ct_center
+            vertices = self._center_vertices_at_origin(vertices)
 
             self._log_bbox(vertices)
             vertices = self._verify_scale(vertices)
+            vertices = self._center_vertices_at_origin(vertices)
 
             self.progress_updated.emit(100, "加载完成!")
 
@@ -229,7 +226,6 @@ class DicomModelLoader(QObject):
         try:
             mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
-            # 自适应：网格越大，简化目标越低
             ratio = self.simplification_ratio
             if len(faces) > 350000:
                 ratio = min(ratio, self.large_mesh_simplification_ratio)
@@ -243,6 +239,23 @@ class DicomModelLoader(QObject):
         except Exception as e:
             print(f"网格简化失败: {e}, 返回原始网格")
             return vertices, faces
+
+    def _center_vertices_at_origin(self, vertices):
+        """平移使几何中心落在世界原点。"""
+        bbox = self._calculate_bbox(vertices)
+        center = np.asarray(bbox["center"], dtype=float)
+        shifted = vertices - center
+        print(f"[坐标变换] 几何中心 {center} → 原点")
+        return shifted
+
+    def _rotate_z_clockwise_deg(self, vertices, deg_clockwise):
+        """绕场景 Z 轴顺时针旋转（俯视 +X→+Y 为逆时针，故取负角）。"""
+        theta = -np.deg2rad(float(deg_clockwise))
+        c, s = np.cos(theta), np.sin(theta)
+        rot = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=float)
+        out = vertices @ rot.T
+        print(f"[旋转] 绕 Z 顺时针 {deg_clockwise}°")
+        return out
 
     def _rotate_to_z_axis(self, vertices):
         """旋转模型"""
