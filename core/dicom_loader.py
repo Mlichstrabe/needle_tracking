@@ -67,7 +67,7 @@ class DicomModelLoader(QObject):
 
             self.progress_updated.emit(90, "正在调整方向...")
             vertices = self._rotate_to_z_axis(vertices)
-            vertices = self._rotate_z_clockwise_deg(vertices, 90.0)
+            vertices = self._rotate_z_clockwise_deg(vertices, -90.0)
 
             vertices = self._center_vertices_at_origin(vertices)
 

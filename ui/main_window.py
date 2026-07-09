@@ -113,8 +113,14 @@ class MainWindow(QMainWindow):
         self._apply_window_geometry()
 
         self.alignment_timer = QTimer(self)
-        self.alignment_timer.setInterval(100)
+        self.alignment_timer.setInterval(10)
         self.alignment_timer.timeout.connect(self._update_alignment)
+
+        self._ALIGN_THRESHOLD_DEG = 3.0
+        self._current_angle_error_deg = 0.0
+        self._puncture_plan_depth = 0.0
+        self._puncture_current_depth = 0.0
+        self._puncture_in_progress = False
 
         self._refresh_workflow_steps()
         self._apply_operation_mode_ui()
@@ -411,6 +417,7 @@ class MainWindow(QMainWindow):
         self.puncture_panel.use_default_target_clicked.connect(
             self._on_use_default_target
         )
+        self.puncture_panel.puncture_reset_clicked.connect(self._on_puncture_reset)
 
     def _init_timers(self):
         self.panel_update_timer = QTimer()
@@ -869,16 +876,13 @@ class MainWindow(QMainWindow):
                 PuncturePointSelector.MODE_ENTRY
             )
         self.puncture_panel.set_target_selecting_mode(False)
-        self._apply_target_to_scene(from_default=False)
-        self._refresh_workflow_steps()
-        dist = self._entry_target_distance_mm()
-        dist_txt = f"{dist:.1f} mm" if dist is not None else "--"
+        self._on_target_set()
         QMessageBox.information(
             self,
             "Target 已选择",
             f"Target: [{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, "
             f"{self.target_point[2]:.1f}] mm\n"
-            f"Entry→Target: {dist_txt}\n\n"
+            f"规划深度: {self._puncture_plan_depth:.1f} mm\n\n"
             f"下一步：连接 IMU 并对准红色 Target。",
             QMessageBox.Ok,
         )
@@ -918,17 +922,13 @@ class MainWindow(QMainWindow):
         if self.puncture_selector:
             self.puncture_selector.setEnabled(False)
         self.puncture_panel.set_target_selecting_mode(False)
-        self._apply_target_to_scene(from_default=True)
-        self._refresh_workflow_steps()
-        dist = self._entry_target_distance_mm()
-        dist_txt = f"{dist:.1f} mm" if dist is not None else "--"
-        p = self.target_point
+        self._on_target_set()
         QMessageBox.information(
             self,
             "已使用默认 Target",
             f"默认：右侧豆状核/基底节区（相对头模几何中心）\n\n"
-            f"[{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}] mm\n"
-            f"Entry→Target: {dist_txt}",
+            f"[{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, {self.target_point[2]:.1f}] mm\n"
+            f"规划深度: {self._puncture_plan_depth:.1f} mm",
             QMessageBox.Ok,
         )
 
@@ -963,14 +963,15 @@ class MainWindow(QMainWindow):
                 PuncturePointSelector.MODE_ENTRY
             )
         self.puncture_panel.set_selecting_mode(False)
-        self._refresh_workflow_steps()
+
+        self._on_target_set()
 
         QMessageBox.information(
             self,
             "Entry 已选择",
-            f"Entry: [{point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f}] mm\n\n"
-            f"下一步：右侧「② 选择 Target」—\n"
-            f"「在 3D 上选 Target」或「使用默认」，再连接 IMU。",
+            f"Entry: [{point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f}] mm\n"
+            f"规划深度: {self._puncture_plan_depth:.1f} mm\n\n"
+            f"下一步：连接 IMU 并对准红色 Target。",
             QMessageBox.Ok,
         )
 
@@ -1099,11 +1100,13 @@ class MainWindow(QMainWindow):
         dot_product = float(np.dot(current_direction, target_direction))
         dot_product = np.clip(dot_product, -1.0, 1.0)
         angle_error_deg = np.degrees(np.arccos(dot_product))
+        self._current_angle_error_deg = angle_error_deg
 
-        if angle_error_deg < 2.0:
-            self.alignment_hud.set_status("★ 完美对齐")
-        elif angle_error_deg < 5.0:
-            self.alignment_hud.set_status("✓ 已对齐")
+        thr = self._ALIGN_THRESHOLD_DEG
+        if angle_error_deg < thr:
+            self.alignment_hud.set_status("★ 对准，可进针")
+        elif angle_error_deg < thr * 2:
+            self.alignment_hud.set_status("接近目标")
         else:
             self.alignment_hud.set_status("需调整姿态")
 
@@ -1114,10 +1117,81 @@ class MainWindow(QMainWindow):
         correction = targ_u - curr_u * np.dot(targ_u, curr_u)
         self.alignment_hud.set_guidance(correction, angle_error_deg)
 
-        if not hasattr(self, "_last_log_time"):
-            self._last_log_time = 0.0
-        now = time.time()
-        if now - self._last_log_time > 1.0:
-            print(f"[Main] 目标方向: {target_direction}")
-            print(f"[Main] 偏离角度: {angle_error_deg:.1f}°")
-            self._last_log_time = now
+        self._puncture_tick(angle_error_deg)
+
+    # ── 进针逻辑 ───────────────────────────────────────────────────────────────
+    PUNCTURE_DURATION_S = 5.0
+
+    def _puncture_tick(self, angle_error_deg: float):
+        """每 alignment_timer 触发一次（10 ms）：判角、推进、更新 UI + 3D 针尖。"""
+        if not self._puncture_ready():
+            return
+
+        thr = self._ALIGN_THRESHOLD_DEG
+        aligned = angle_error_deg < thr
+
+        if not aligned:
+            if self._puncture_in_progress:
+                self._puncture_in_progress = False
+                self.puncture_panel.update_puncture_depth(
+                    self._puncture_current_depth, self._puncture_plan_depth
+                )
+        else:
+            if not self._puncture_in_progress:
+                self._puncture_in_progress = True
+                self.puncture_panel.enable_puncture_mode(self._puncture_plan_depth)
+
+            dt = 0.01
+            self._puncture_current_depth += (
+                self._puncture_plan_depth / self.PUNCTURE_DURATION_S
+            ) * dt
+
+            if self._puncture_current_depth >= self._puncture_plan_depth:
+                self._puncture_current_depth = self._puncture_plan_depth
+                self._puncture_in_progress = False
+                self.puncture_panel.set_puncture_done()
+            else:
+                self.puncture_panel.update_puncture_depth(
+                    self._puncture_current_depth, self._puncture_plan_depth
+                )
+
+            self._apply_tip_at_depth(self._puncture_current_depth)
+
+    def _puncture_ready(self) -> bool:
+        return (
+            self._puncture_plan_depth > 0
+            and self.device_manager.is_connected
+            and not self._is_observe_mode()
+        )
+
+    def _apply_tip_at_depth(self, depth_mm: float):
+        entry = np.asarray(self.puncture_point, dtype=float)
+        dir_w = np.asarray(self.target_direction_world, dtype=float)
+        tip = entry + dir_w * depth_mm
+        imu_pos = tip - np.asarray(self._needle_direction, dtype=float) * self.needle_length
+        self.gl_widget.update_data(imu_pos, tip)
+
+    def _on_puncture_reset(self):
+        self._puncture_current_depth = 0.0
+        self._puncture_in_progress = False
+        self.puncture_panel.reset_puncture_ui()
+        if self.puncture_point is not None and hasattr(self, "target_direction_world"):
+            self._apply_tip_at_depth(0.0)
+
+    def _on_target_set(self):
+        self._puncture_current_depth = 0.0
+        self._puncture_in_progress = False
+        if self.puncture_point is None:
+            self._puncture_plan_depth = 0.0
+            return
+        tgt = self._effective_target()
+        if tgt is None:
+            self._puncture_plan_depth = 0.0
+            return
+        entry = np.asarray(self.puncture_point, dtype=float)
+        vec = tgt - entry
+        self._puncture_plan_depth = float(np.linalg.norm(vec))
+        self._update_target_direction_world()
+        self.gl_widget.set_entry_target_line(entry, tgt)
+        self._apply_tip_at_depth(0.0)
+        self._refresh_workflow_steps()

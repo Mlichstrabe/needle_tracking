@@ -583,6 +583,7 @@ class PuncturePointPanel(QFrame):
     start_target_selection_clicked = pyqtSignal()
     reselect_target_clicked = pyqtSignal()
     use_default_target_clicked = pyqtSignal()
+    puncture_reset_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -697,9 +698,99 @@ class PuncturePointPanel(QFrame):
         self.target_coord_widget.setVisible(False)
         layout.addWidget(self.target_coord_widget)
 
+        self._init_puncture_ui(layout)
+
         step_title = QLabel("① 选择 Entry")
         step_title.setObjectName("SectionTitle")
         layout.insertWidget(0, step_title)
+
+    def _init_puncture_ui(self, layout):
+        self._puncture_in_progress = False
+        self._puncture_done = False
+        self._puncture_current = 0.0
+        self._puncture_plan = 0.0
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setObjectName("Separator")
+        layout.addWidget(sep)
+
+        hdr = QLabel("③ 进针进度")
+        hdr.setObjectName("SectionTitle")
+        layout.addWidget(hdr)
+
+        self.puncture_depth_label = QLabel("当前: 0.0 / -- mm")
+        self.puncture_depth_label.setObjectName("MetricValue")
+        f = self.puncture_depth_label.font()
+        f.setPointSize(f.pointSize() + 2)
+        self.puncture_depth_label.setFont(f)
+        layout.addWidget(self.puncture_depth_label)
+
+        self.puncture_progress = QProgressBar()
+        self.puncture_progress.setRange(0, 100)
+        self.puncture_progress.setValue(0)
+        self.puncture_progress.setTextVisible(True)
+        layout.addWidget(self.puncture_progress)
+
+        hbox = QHBoxLayout()
+        self.puncture_remaining = QLabel("剩余: -- mm")
+        set_label_role(self.puncture_remaining, "muted")
+        hbox.addWidget(self.puncture_remaining)
+        hbox.addStretch()
+
+        self.puncture_reset_btn = QPushButton("重置")
+        set_button_variant(self.puncture_reset_btn, "ghost")
+        self.puncture_reset_btn.clicked.connect(self.puncture_reset_clicked.emit)
+        self.puncture_reset_btn.setEnabled(False)
+        hbox.addWidget(self.puncture_reset_btn)
+        layout.addLayout(hbox)
+
+        self.puncture_status = QLabel("▶ 对准后可开始进针")
+        set_label_role(self.puncture_status, "muted")
+        layout.addWidget(self.puncture_status)
+
+    def enable_puncture_mode(self, plan_mm: float):
+        self._puncture_in_progress = True
+        self._puncture_done = False
+        self._puncture_plan = plan_mm
+        self.puncture_reset_btn.setEnabled(True)
+        self.update_puncture_depth(0.0, plan_mm)
+
+    def update_puncture_depth(self, current_mm: float, plan_mm: float):
+        self._puncture_current = current_mm
+        self._puncture_plan = plan_mm
+        pct = 0.0
+        if plan_mm > 0:
+            pct = min(current_mm / plan_mm * 100, 100.0)
+        self.puncture_depth_label.setText(f"当前: {current_mm:.1f} / {plan_mm:.1f} mm")
+        self.puncture_progress.setValue(int(pct))
+        self.puncture_remaining.setText(f"剩余: {max(plan_mm - current_mm, 0.0):.1f} mm")
+        if self._puncture_done:
+            self.puncture_status.setText("★ 到达 Target！")
+            set_label_role(self.puncture_status, "ok")
+        elif self._puncture_in_progress:
+            self.puncture_status.setText("▶ 进针中...")
+            set_label_role(self.puncture_status, "ok")
+        else:
+            self.puncture_status.setText("▶ 对准后可开始进针")
+            set_label_role(self.puncture_status, "muted")
+
+    def set_puncture_done(self):
+        self._puncture_done = True
+        self._puncture_in_progress = False
+        self.update_puncture_depth(self._puncture_current, self._puncture_plan)
+
+    def reset_puncture_ui(self):
+        self._puncture_in_progress = False
+        self._puncture_done = False
+        self._puncture_current = 0.0
+        self._puncture_plan = 0.0
+        self.puncture_progress.setValue(0)
+        self.puncture_depth_label.setText("当前: 0.0 / -- mm")
+        self.puncture_remaining.setText("剩余: -- mm")
+        self.puncture_status.setText("▶ 对准后可开始进针")
+        set_label_role(self.puncture_status, "muted")
+        self.puncture_reset_btn.setEnabled(False)
 
     def set_model_loaded(self, loaded):
         """设置模型加载状态"""
