@@ -7,96 +7,174 @@
 
 - ``v_needle_body``：针轴在 IMU 体坐标 XY 平面，从 +X **顺时针** 121°
 - 场景约定：Z 向上，针尖向下 = ``(0, 0, -1)``，针尖固定原点
+
+状态管理：所有运行时配置集中在 ``_State`` 实例中。
+模块级函数为向后兼容的快捷方式，委托至模块级单例 ``_state``。
+测试时可直接实例化 ``_State()`` 并传入相关函数。
 """
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence, Tuple, Union
+from copy import deepcopy
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
-
-# 针轴：IMU 体坐标 XY 平面，从 +X 顺时针 121° + config 偏置
-_NEEDLE_BODY_ANGLE_DEG: float = 121.0
-_NEEDLE_BODY_BIAS_DEG: float = 0.0
-_NEEDLE_ANGLE_CLOCKWISE_FROM_X: bool = True
-_NEEDLE_BODY_IMU: Tuple[float, float, float] = (1.0, 0.0, 0.0)
-
-_DISPLAY_OFFSET: np.ndarray = np.eye(3, dtype=float)
-_DISPLAY_OFFSET_ENABLED: bool = False
-
-_SCENE_Z_CCW_DEG: float = 0.0
 
 SCENE_DOWN: Tuple[float, float, float] = (0.0, 0.0, -1.0)
 
 
-def _refresh_needle_body_vector() -> None:
-    global _NEEDLE_BODY_IMU
-    rad = math.radians(_NEEDLE_BODY_ANGLE_DEG + _NEEDLE_BODY_BIAS_DEG)
-    if _NEEDLE_ANGLE_CLOCKWISE_FROM_X:
-        _NEEDLE_BODY_IMU = (math.cos(rad), -math.sin(rad), 0.0)
-    else:
-        _NEEDLE_BODY_IMU = (math.cos(rad), math.sin(rad), 0.0)
+# ═══════════════════════════════════════════════════════════
+#  状态容器
+# ═══════════════════════════════════════════════════════════
 
+class _State:
+    """不可变数学函数的可变配置参数。"""
+
+    def __init__(self) -> None:
+        self.needle_body_angle_deg: float = 121.0
+        self.needle_body_bias_deg: float = 0.0
+        self.needle_angle_clockwise_from_x: bool = True
+        self.needle_body_imu: Tuple[float, float, float] = (1.0, 0.0, 0.0)
+
+        self.display_offset: np.ndarray = np.eye(3, dtype=float)
+        self.display_offset_enabled: bool = False
+
+        self.scene_z_ccw_deg: float = 0.0
+
+        self._refresh_needle_body_vector()
+
+    def _refresh_needle_body_vector(self) -> None:
+        rad = math.radians(self.needle_body_angle_deg + self.needle_body_bias_deg)
+        if self.needle_angle_clockwise_from_x:
+            self.needle_body_imu = (math.cos(rad), -math.sin(rad), 0.0)
+        else:
+            self.needle_body_imu = (math.cos(rad), math.sin(rad), 0.0)
+
+    def scene_z_rotation_matrix(self) -> np.ndarray:
+        a = math.radians(self.scene_z_ccw_deg)
+        c, s = math.cos(a), math.sin(a)
+        return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+
+    def display_offset_dict(self) -> dict:
+        return {
+            "enabled": self.display_offset_enabled,
+            "rotation": [[float(self.display_offset[r, c]) for c in range(3)] for r in range(3)],
+        }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """导出为配置文件兼容的字典。"""
+        return {
+            "needle_body_angle_deg": self.needle_body_angle_deg,
+            "needle_body_bias_deg": self.needle_body_bias_deg,
+            "scene_z_ccw_deg": self.scene_z_ccw_deg,
+            "needle_angle_clockwise_from_x": self.needle_angle_clockwise_from_x,
+            "display_offset": self.display_offset_dict(),
+        }
+
+
+# 模块级单例（向后兼容）
+_state = _State()
+
+
+def get_state() -> _State:
+    """获取当前全局状态（用于持久化/测试）。"""
+    return _state
+
+
+def reset_state() -> None:
+    """重置为默认值（用于测试清理）。"""
+    global _state
+    _state = _State()
+
+
+# ═══════════════════════════════════════════════════════════
+#  配置 getter/setter（委托至 _state）
+# ═══════════════════════════════════════════════════════════
 
 def set_needle_angle_clockwise_from_x(clockwise: bool) -> None:
-    global _NEEDLE_ANGLE_CLOCKWISE_FROM_X
-    _NEEDLE_ANGLE_CLOCKWISE_FROM_X = bool(clockwise)
-    _refresh_needle_body_vector()
+    _state.needle_angle_clockwise_from_x = bool(clockwise)
+    _state._refresh_needle_body_vector()
 
 
 def needle_angle_clockwise_from_x() -> bool:
-    return _NEEDLE_ANGLE_CLOCKWISE_FROM_X
+    return _state.needle_angle_clockwise_from_x
 
 
 def set_needle_body_angle_deg(deg: float) -> None:
-    global _NEEDLE_BODY_ANGLE_DEG
-    _NEEDLE_BODY_ANGLE_DEG = float(deg)
-    _refresh_needle_body_vector()
+    _state.needle_body_angle_deg = float(deg)
+    _state._refresh_needle_body_vector()
 
 
 def needle_body_angle_deg() -> float:
-    return _NEEDLE_BODY_ANGLE_DEG
+    return _state.needle_body_angle_deg
 
 
 def set_needle_body_bias_deg(deg: float) -> None:
-    global _NEEDLE_BODY_BIAS_DEG
-    _NEEDLE_BODY_BIAS_DEG = float(deg)
-    _refresh_needle_body_vector()
+    _state.needle_body_bias_deg = float(deg)
+    _state._refresh_needle_body_vector()
 
 
 def needle_body_bias_deg() -> float:
-    return _NEEDLE_BODY_BIAS_DEG
+    return _state.needle_body_bias_deg
 
 
 def needle_body_effective_angle_deg() -> float:
-    return _NEEDLE_BODY_ANGLE_DEG + _NEEDLE_BODY_BIAS_DEG
+    return _state.needle_body_angle_deg + _state.needle_body_bias_deg
 
 
 def set_scene_z_ccw_deg(deg: float) -> None:
-    global _SCENE_Z_CCW_DEG
-    _SCENE_Z_CCW_DEG = float(deg)
+    _state.scene_z_ccw_deg = float(deg)
 
 
 def scene_z_ccw_deg() -> float:
-    return _SCENE_Z_CCW_DEG
+    return _state.scene_z_ccw_deg
 
 
 def scene_z_rotation_matrix() -> np.ndarray:
-    a = math.radians(_SCENE_Z_CCW_DEG)
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+    return _state.scene_z_rotation_matrix()
 
 
 def apply_scene_z_rotation(v: Sequence[float]) -> np.ndarray:
-    return scene_z_rotation_matrix() @ np.asarray(v, dtype=float).reshape(3)
+    return _state.scene_z_rotation_matrix() @ np.asarray(v, dtype=float).reshape(3)
 
 
 def needle_body_vector_imu() -> Tuple[float, float, float]:
-    return _NEEDLE_BODY_IMU
+    return _state.needle_body_imu
 
 
-_refresh_needle_body_vector()
+def display_offset_enabled() -> bool:
+    return _state.display_offset_enabled
 
+
+def display_offset_matrix() -> np.ndarray:
+    return _state.display_offset.copy()
+
+
+def display_offset_dict() -> dict:
+    return _state.display_offset_dict()
+
+
+def apply_display_offset(data: Optional[dict]) -> None:
+    if not data:
+        _state.display_offset = np.eye(3, dtype=float)
+        _state.display_offset_enabled = False
+        return
+    rot = data.get("rotation")
+    if rot and isinstance(rot, (list, tuple)) and len(rot) == 3:
+        _state.display_offset = np.asarray(rot, dtype=float).reshape(3, 3)
+        _state.display_offset_enabled = bool(data.get("enabled", True))
+    else:
+        _state.display_offset = np.eye(3, dtype=float)
+        _state.display_offset_enabled = False
+
+
+def clear_display_offset() -> None:
+    apply_display_offset(None)
+
+
+# ═══════════════════════════════════════════════════════════
+#  纯函数（无状态依赖）
+# ═══════════════════════════════════════════════════════════
 
 def _unit(v: Sequence[float]) -> np.ndarray:
     a = np.asarray(v, dtype=float).reshape(3)
@@ -137,71 +215,28 @@ def _rotation_matrix_from_to(src: Sequence[float], dst: Sequence[float]) -> np.n
     return np.eye(3, dtype=float) + math.sin(angle) * k + (1.0 - math.cos(angle)) * (k @ k)
 
 
-def _matrix_to_rows(m: np.ndarray) -> List[List[float]]:
-    return [[float(m[r, c]) for c in range(3)] for r in range(3)]
-
-
-def _rows_to_matrix(rows: Sequence[Sequence[float]]) -> np.ndarray:
-    return np.asarray(rows, dtype=float).reshape(3, 3)
-
-
-def display_offset_enabled() -> bool:
-    return _DISPLAY_OFFSET_ENABLED
-
-
-def display_offset_matrix() -> np.ndarray:
-    return _DISPLAY_OFFSET.copy()
-
-
-def display_offset_dict() -> dict:
-    return {
-        "enabled": bool(_DISPLAY_OFFSET_ENABLED),
-        "rotation": _matrix_to_rows(_DISPLAY_OFFSET),
-    }
-
-
-def apply_display_offset(data: Optional[dict]) -> None:
-    global _DISPLAY_OFFSET, _DISPLAY_OFFSET_ENABLED
-    if not data:
-        _DISPLAY_OFFSET = np.eye(3, dtype=float)
-        _DISPLAY_OFFSET_ENABLED = False
-        return
-    rot = data.get("rotation")
-    if rot and isinstance(rot, (list, tuple)) and len(rot) == 3:
-        _DISPLAY_OFFSET = _rows_to_matrix(rot)
-        _DISPLAY_OFFSET_ENABLED = bool(data.get("enabled", True))
-    else:
-        _DISPLAY_OFFSET = np.eye(3, dtype=float)
-        _DISPLAY_OFFSET_ENABLED = False
-
-
-def clear_display_offset() -> None:
-    apply_display_offset(None)
-
+# ═══════════════════════════════════════════════════════════
+#  业务函数（读取 _state）
+# ═══════════════════════════════════════════════════════════
 
 def needle_direction_raw(quaternion: Sequence[float]) -> np.ndarray:
     """四元数 → 针轴方向（未做竖直偏置）。"""
-    return np.array(_rotate_vector_by_quaternion(quaternion, _NEEDLE_BODY_IMU), dtype=float)
+    return np.array(_rotate_vector_by_quaternion(quaternion, _state.needle_body_imu), dtype=float)
 
 
 def capture_vertical_display_offset(quaternion: Sequence[float]) -> np.ndarray:
-    """
-    针体竖直持握时标定：将当前 d_raw 映射到场景 (0,0,-1)。
-
-    返回写入的 R_offset 矩阵。
-    """
-    global _DISPLAY_OFFSET, _DISPLAY_OFFSET_ENABLED
+    """针体竖直持握时标定：将当前 d_raw 映射到场景 (0,0,-1)。"""
     d_raw = _unit(needle_direction_raw(quaternion))
-    _DISPLAY_OFFSET = _rotation_matrix_from_to(d_raw, SCENE_DOWN)
-    _DISPLAY_OFFSET_ENABLED = True
-    return _DISPLAY_OFFSET.copy()
+    _state.display_offset = _rotation_matrix_from_to(d_raw, SCENE_DOWN)
+    _state.display_offset_enabled = True
+    return _state.display_offset.copy()
 
 
 def needle_axis_scene_raw(quaternion: Sequence[float]) -> Tuple[float, float, float]:
     d = needle_direction_raw(quaternion)
-    if _DISPLAY_OFFSET_ENABLED:
-        d = _DISPLAY_OFFSET @ d
-    d = apply_scene_z_rotation(d)
+    if _state.display_offset_enabled:
+        d = _state.display_offset @ d
+    d = _state.scene_z_rotation_matrix() @ d
     return float(d[0]), float(d[1]), float(d[2])
 
 

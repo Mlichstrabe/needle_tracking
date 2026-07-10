@@ -1,4 +1,5 @@
 """主窗口 - 整合所有模块"""
+import logging
 import os
 import time
 import traceback
@@ -51,6 +52,8 @@ from ui.widgets.workflow_stepper import WorkflowStepBar
 from ui.widgets.alignment_hud import AlignmentHudPanel
 from ui.widgets.ui_helpers import configure_side_scroll, set_label_role, apply_panel_chrome
 
+logger = logging.getLogger(__name__)
+
 
 def default_intracerebral_hemorrhage_target_mm(bbox):
     """
@@ -92,14 +95,18 @@ class MainWindow(QMainWindow):
         self._init_ui()
 
         self._ui_ready = False
+        self._closing = False
         self.puncture_selector = None
         self.puncture_point = None
         self.puncture_normal = None
         self.target_point = None
+        self.target_direction_world = None
         self._default_target_point = None
         self._ct_model_center = None
         self._selecting_target = False
         self._ct_model_loaded = False
+        self._ct_loading = False
+        self.ct_loader_thread = None
         self._operation_mode = DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
 
         self._current_quaternion = [1, 0, 0, 0]
@@ -136,7 +143,7 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_steps()
         self._apply_operation_mode_ui()
         self._ui_ready = True
-        print("✓ 主窗口初始化完成")
+        logger.info("✓ 主窗口初始化完成")
 
     def _is_observe_mode(self):
         return self._operation_mode == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE
@@ -432,7 +439,7 @@ class MainWindow(QMainWindow):
 
     def _init_timers(self):
         self.panel_update_timer = QTimer()
-        self.panel_update_timer.setInterval(33)
+        self.panel_update_timer.setInterval(100)  # 10 Hz，数据显示无需高频刷新
         self.panel_update_timer.timeout.connect(self._update_panels)
         self.panel_update_timer.start()
 
@@ -710,6 +717,8 @@ class MainWindow(QMainWindow):
 
     def _finish_calibration(self):
         """完成校准"""
+        if self._closing:
+            return
         self.device_manager.calibrate_magnetic_end()
         self.connection_panel.btn_calibrate.setEnabled(True)
         self.connection_panel.btn_calibrate.setText("校准传感器")
@@ -757,17 +766,34 @@ class MainWindow(QMainWindow):
         self.sim_panel.update_current_direction(inverted_direction)
 
     def closeEvent(self, event):
+        self._closing = True
         self._stop_alignment_monitoring()
         self.panel_update_timer.stop()
         self.device_manager.disconnect()
-        print("✓ 程序已退出")
+        # 清理 CT 加载线程
+        if self.ct_loader_thread is not None:
+            self.ct_loader_thread.quit()
+            self.ct_loader_thread.wait(3000)
+            self.ct_loader_thread = None
+        logger.info("✓ 程序已退出")
         event.accept()
 
     def _on_ct_load(self, folder_path):
+        # 防止重复加载导致线程泄漏
+        if self._ct_loading:
+            print("[Main] ⚠ CT 正在加载中，忽略重复请求")
+            return
         print(f"[Main] 开始加载DICOM文件夹: {folder_path}")
         self.ct_panel.set_loading(True)
+        self._ct_loading = True
+
+        # 清理旧线程
+        if self.ct_loader_thread is not None:
+            self.ct_loader_thread.quit()
+            self.ct_loader_thread.wait(3000)
 
         self.ct_loader_thread = QThread()
+        self.ct_loader_thread.setObjectName("CTLoader")
         self.dicom_loader.moveToThread(self.ct_loader_thread)
         self.ct_loader_thread.started.connect(
             lambda: self.dicom_loader.load_dicom_folder(folder_path)
@@ -778,6 +804,7 @@ class MainWindow(QMainWindow):
         self.ct_panel.update_progress(value, message)
 
     def _on_ct_loaded(self, model_data):
+        self._ct_loading = False
         print("[Main] ✓ CT模型加载成功")
         print(f"  顶点数: {model_data['num_vertices']}")
         print(f"  面数: {model_data['num_faces']}")
@@ -819,6 +846,7 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_steps()
 
     def _on_ct_failed(self, error_msg):
+        self._ct_loading = False
         print(f"[Main] ✗ CT模型加载失败: {error_msg}")
         self.ct_panel.set_loading(False)
         QMessageBox.critical(self, "加载失败", error_msg)
@@ -1076,9 +1104,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(1000, self._calibrate_initial_pose)
 
     def _calibrate_initial_pose(self):
+        if self._closing:
+            return
         print("[Main] 正在校准初始姿态...")
 
-        if not hasattr(self, "_current_quaternion") or self._current_quaternion is None:
+        if self._current_quaternion is None or len(self._current_quaternion) < 4:
             print("[Main] ⚠️ IMU数据尚未接收，延迟校准")
             QTimer.singleShot(500, self._calibrate_initial_pose)
             return
@@ -1115,7 +1145,7 @@ class MainWindow(QMainWindow):
     def _update_alignment(self):
         if self._needle_direction is None:
             return
-        if not hasattr(self, "target_direction_world"):
+        if self.target_direction_world is None:
             return
 
         current_direction = self._needle_direction
@@ -1147,7 +1177,7 @@ class MainWindow(QMainWindow):
     PUNCTURE_DURATION_S = 10.0
 
     def _puncture_tick(self, angle_error_deg: float):
-        """每 alignment_timer 触发一次（10 ms）：判角、推进、更新 UI + 针尖 override。"""
+        """每 alignment_timer 触发一次：判角、推进、更新 UI + 针尖 override。"""
         if not self._puncture_ready():
             return
         # 已完成进针：不再 tick，避免 UI 闪烁
@@ -1170,13 +1200,18 @@ class MainWindow(QMainWindow):
             # 首次推进：解除 GL widget 的 fixed_tip 拦截，让 override tip 接管针尖位置
             self.gl_widget.clear_fixed_tip()
             self._puncture_in_progress = True
+            self._puncture_last_tick = time.perf_counter()
             self.puncture_panel.enable_puncture_mode(self._puncture_plan_depth)
             # 进度条/剩余时间显示对齐
             self.puncture_panel.update_puncture_depth(
                 self._puncture_current_depth, self._puncture_plan_depth
             )
 
-        dt = 0.01
+        now = time.perf_counter()
+        dt = now - getattr(self, "_puncture_last_tick", now)
+        self._puncture_last_tick = now
+        # 防止首次或异常帧 dt 过大
+        dt = min(dt, 0.1)
         self._puncture_current_depth += (
             self._puncture_plan_depth / self.PUNCTURE_DURATION_S
         ) * dt
@@ -1186,6 +1221,16 @@ class MainWindow(QMainWindow):
             self._puncture_in_progress = False
             self._puncture_finished = True
             self.puncture_panel.set_puncture_done()
+            # ── 入针完成弹窗 ──
+            if not self._closing:
+                QMessageBox.information(
+                    self,
+                    "穿刺完成",
+                    f"✅ 已到达 Target！\n\n"
+                    f"  Entry→Target 距离: {self._puncture_plan_depth:.1f} mm\n"
+                    f"  实际进针深度: {self._puncture_current_depth:.1f} mm",
+                )
+            return
         else:
             self.puncture_panel.update_puncture_depth(
                 self._puncture_current_depth, self._puncture_plan_depth

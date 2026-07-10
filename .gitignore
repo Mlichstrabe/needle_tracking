@@ -9,7 +9,9 @@ __pycache__/
 dist/
 build/
 
-# 本地工具 / IDE
+# 本地日志
+*.log
+
 .claude/
 .idea/
 .vscode/

@@ -502,3 +502,48 @@ QLabel#AlignmentStatus[status="danger"] {
     background: #8b3340;
     color: #ffecee;
 }
+
+/* ══ QMessageBox 弹窗（暗色主题，避免系统浅色对话框+白色文字看不清）══ */
+QMessageBox {
+    background: #121a26;
+    border: 1px solid #2a3d56;
+    border-radius: 10px;
+}
+
+QMessageBox QLabel {
+    color: #d4dee8;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 4px;
+    min-width: 240px;
+}
+
+QMessageBox QPushButton {
+    background: #1a2535;
+    color: #eaf3f8;
+    border: 1px solid #354d6a;
+    border-radius: 7px;
+    padding: 8px 20px;
+    font-weight: 600;
+    min-width: 80px;
+    min-height: 32px;
+}
+
+QMessageBox QPushButton:hover {
+    background: #243448;
+    border-color: #4d6d94;
+}
+
+QMessageBox QPushButton:pressed {
+    background: #161f2c;
+}
+
+QMessageBox QPushButton:default {
+    background: #1a8f5c;
+    border-color: #2ecf83;
+    color: #f4fffa;
+}
+
+QMessageBox QPushButton:default:hover {
+    background: #22a86d;
+}

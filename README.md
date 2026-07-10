@@ -32,7 +32,7 @@ PyQt5 桌面应用：串口 IMU 姿态 + CT 三维显示 + 穿刺点选点与对
 ## 依赖与运行
 
 ```bash
-pip install PyQt5 numpy pyserial pydicom scikit-image trimesh pyqtgraph PyOpenGL
+pip install -r requirements.txt
 python main.py
 ```
 
@@ -47,9 +47,9 @@ python main.py
 
 ## 关键实现说明
 
-- **针长**：默认 162 mm（`MainWindow.needle_length`），用于由针尖反推 IMU 位置。  
-- **针轴**：`imu_kinematics.needle_axis_scene_normalized()`，IMU 体坐标参考方向写死在模块内。  
-- **Target 点**：加载 CT 后为 `center + [30, -25, 60]`（mm），尚未提供 UI 重选。  
+- **针长**：默认 200 mm（`config/imu_geometry.json` → `MainWindow.needle_length`），用于由针尖反推 IMU 位置。  
+- **针轴**：`imu_kinematics.needle_axis_scene_normalized()`，IMU 体坐标参考方向由 `imu_geometry.json` 配置。  
+- **Target 点**：加载 CT 后默认为右侧豆状核区偏移；可在 3D 视图中点击选择自定义 Target，或点击「使用默认」。
 
 ## 开发入口
 

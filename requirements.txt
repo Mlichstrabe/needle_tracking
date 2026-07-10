@@ -1,2 +1,25 @@
-# CT 入针点射线拾取（trimesh.ray 依赖 rtree）
-rtree>=1.0.0
+# ===== 核心 GUI 框架 =====
+PyQt5>=5.15,<6.0
+PyQt5-Qt5>=5.15  # PyQt5 捆绑的 Qt 运行时
+
+# ===== 数值计算 =====
+numpy>=1.24,<3.0
+scipy>=1.10,<2.0
+
+# ===== 串口 IMU =====
+pyserial>=3.5
+
+# ===== DICOM / CT 影像 =====
+pydicom>=3.0,<4.0
+scikit-image>=0.20,<1.0
+
+# ===== 3D 图形 =====
+pyqtgraph>=0.13,<1.0
+PyOpenGL>=3.1,<4.0
+trimesh>=4.0,<5.0
+
+# ===== 射线拾取加速（trimesh.ray 依赖）=====
+rtree>=1.0,<2.0
+
+# ===== lz4 压缩（DICOM 某些格式需要）=====
+lz4>=4.0,<5.0

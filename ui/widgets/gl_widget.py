@@ -1,5 +1,6 @@
 """3D可视化组件 - 支持模拟穿刺显示"""
 import json
+import logging
 import os
 
 import numpy as np
@@ -7,6 +8,10 @@ import pyqtgraph.opengl as gl
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QFrame, QVBoxLayout
 from PyQt5.QtGui import QVector3D, QMatrix4x4
+
+from core.project_paths import CONFIG_DIR
+
+logger = logging.getLogger(__name__)
 
 
 class PunctureGLViewWidget(gl.GLViewWidget):
@@ -41,10 +46,7 @@ class GLVisualizationWidget(QFrame):
 
     @staticmethod
     def _viewport_config_path():
-        root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
-        )
-        return os.path.join(root, "config", "viewport.json")
+        return CONFIG_DIR / "viewport.json"
 
     def _load_viewport_config(self):
         path = self._viewport_config_path()
@@ -52,7 +54,7 @@ class GLVisualizationWidget(QFrame):
             with open(path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
         except Exception as exc:
-            print(f"[GL] 视角配置未加载，使用内置默认: {exc}")
+            logger.warning("GL 视角配置未加载，使用内置默认: %s", exc)
             return {}
         return cfg
 
@@ -106,7 +108,7 @@ class GLVisualizationWidget(QFrame):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         self._viewport_cfg = cfg
-        print(f"[GL] 已保存默认视角 → {path}: dist={dist:.0f} elev={elev:.1f} azim={azim:.1f}")
+        logger.info("已保存默认视角 → %s: dist=%.0f elev=%.1f azim=%.1f", path, dist, elev, azim)
         return cfg
 
     def __init__(self, parent=None):
@@ -166,7 +168,7 @@ class GLVisualizationWidget(QFrame):
         self.head_model_visible = True
         self.head_model_color = (0.9, 0.9, 0.9, 0.6)
 
-        print("[GL] 性能优化已启用")
+        logger.debug("性能优化已启用")
 
     def _init_scene(self):
         """网格与 GLAxisItem 同处默认 XZ 平面（含蓝/黄轴方向），原点对齐世界系。"""
@@ -217,8 +219,27 @@ class GLVisualizationWidget(QFrame):
         )
         self.view.addItem(self.imu_box)
 
-        print("[GL] 针杆线条已创建（白色，5px）")
-        print("[GL] 立方体标记已创建（针尖5mm红色，IMU4mm绿色）")
+        # ── 针体运动箭头（锥形，指向针尖）──
+        self._arrow_offset_mm = 30.0
+        self._arrow_height = 15.0
+        self._arrow_radius = 3.0
+        self._arrow_segments = 8
+        arrow_verts, arrow_faces = self._create_cone_mesh(
+            self._arrow_height, self._arrow_radius, self._arrow_segments
+        )
+        self.needle_arrow = gl.GLMeshItem(
+            vertexes=arrow_verts,
+            faces=arrow_faces,
+            color=(1.0, 0.5, 0.0, 0.85),
+            shader='shaded',
+            glOptions='translucent',
+            smooth=True,
+        )
+        self.view.addItem(self.needle_arrow)
+
+        logger.info("针杆线条已创建（白色，5px）")
+        logger.info("立方体标记已创建（针尖5mm红色，IMU4mm绿色）")
+        logger.info("针体箭头已创建（橙色锥形，指向针尖）")
 
     def _set_box_center(self, box, center, half_size):
         """GLBoxItem 顶点从原点延伸，translate 使方块几何中心落在 center。"""
@@ -227,6 +248,69 @@ class GLVisualizationWidget(QFrame):
         transform = QMatrix4x4()
         transform.translate(float(c[0] - h[0]), float(c[1] - h[1]), float(c[2] - h[2]))
         box.setTransform(transform)
+
+    @staticmethod
+    def _create_cone_mesh(height: float, radius: float, segments: int = 8):
+        """生成沿 +Z 方向的锥体顶点/面（尖端在 +Z，底面在 XY 平面）。"""
+        vertices = []
+        # 尖端
+        vertices.append([0.0, 0.0, height])
+        # 底面圆周
+        for i in range(segments):
+            a = 2.0 * np.pi * i / segments
+            vertices.append([radius * np.cos(a), radius * np.sin(a), 0.0])
+        vertices = np.array(vertices, dtype=float)
+
+        faces = []
+        for i in range(segments):
+            nxt = (i + 1) % segments
+            faces.append([0, i + 1, nxt + 1])
+        faces = np.array(faces, dtype=int)
+        return vertices, faces
+
+    def _rotation_matrix_from_to(self, src, dst):
+        """将单位向量 src 旋转到 dst 的 3×3 旋转矩阵。"""
+        a = np.asarray(src, dtype=float).reshape(3)
+        b = np.asarray(dst, dtype=float).reshape(3)
+        a = a / np.linalg.norm(a)
+        b = b / np.linalg.norm(b)
+        dot = float(np.clip(np.dot(a, b), -1.0, 1.0))
+        if dot > 1.0 - 1e-8:
+            return np.eye(3, dtype=float)
+        if dot < -1.0 + 1e-8:
+            ortho = np.array([1.0, 0.0, 0.0], dtype=float)
+            if abs(float(np.dot(a, ortho))) > 0.9:
+                ortho = np.array([0.0, 1.0, 0.0], dtype=float)
+            axis = ortho / np.linalg.norm(ortho)
+        else:
+            axis = np.cross(a, b)
+            axis = axis / np.linalg.norm(axis)
+        angle = np.arccos(dot)
+        x, y, z = axis
+        k = np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]], dtype=float)
+        return np.eye(3, dtype=float) + np.sin(angle) * k + (1.0 - np.cos(angle)) * (k @ k)
+
+    def _update_arrow_transform(self, pos, direction):
+        """更新箭头位置和旋转，使箭头尖端指向 pos（针尖）。"""
+        d = np.asarray(direction, dtype=float).reshape(3)
+        n = float(np.linalg.norm(d))
+        if n < 1e-9:
+            d = np.array([0.0, 0.0, -1.0])
+        else:
+            d = d / n
+        # 箭头底座中心：距针尖 _arrow_offset_mm 处（沿 direction 反方向）
+        arrow_base = np.asarray(pos, dtype=float).reshape(3) - d * self._arrow_offset_mm
+        # 锥体默认尖端指向 +Z；需要旋转使 +Z 对齐到 -d（指向针尖）
+        rot = self._rotation_matrix_from_to([0.0, 0.0, 1.0], -d)
+        transform = QMatrix4x4()
+        for r in range(3):
+            for c in range(3):
+                transform[r, c] = float(rot[r, c])
+        transform[0, 3] = float(arrow_base[0])
+        transform[1, 3] = float(arrow_base[1])
+        transform[2, 3] = float(arrow_base[2])
+        transform[3, 3] = 1.0
+        self.needle_arrow.setTransform(transform)
 
     def _needle_endpoints(self):
         """针体直线两端：针尖（tip）与针尾（IMU）。"""
@@ -281,7 +365,7 @@ class GLVisualizationWidget(QFrame):
         # 4. Entry-Target连线（蓝色虚线）
         self.entry_target_line = None  # 稍后创建
 
-        print("[GL] ✓ 穿刺点标记系统已初始化")
+        logger.info("穿刺点标记系统已初始化")
 
     def update_data(self, imu_pos, tip_pos, max_points=500):
         """更新可视化数据"""
@@ -343,7 +427,7 @@ class GLVisualizationWidget(QFrame):
                     except Exception as e:
                         if not self._traj_error_shown:
                             self._traj_error_shown = True
-                            print(f"[GL 错误] 轨迹线更新失败: {e}")
+                            logger.error("轨迹线更新失败: %s", e, exc_info=True)
 
         # 更新虚线
         if self._path_lines_dirty:
@@ -374,7 +458,7 @@ class GLVisualizationWidget(QFrame):
                     mode='lines'
                 )
                 self.view.addItem(self.preset_path_line)
-                print(f"[GL] 预设路径虚线已创建（从{start_point}到{end_point}）")
+                logger.debug("预设路径虚线已创建（从%s到%s）", start_point, end_point)
             else:
                 self.preset_path_line.setData(pos=dashed_line)
         else:
@@ -404,7 +488,7 @@ class GLVisualizationWidget(QFrame):
                     mode='lines'
                 )
                 self.view.addItem(self.target_path_line)
-                print(f"[GL] 锁定目标虚线已创建（从{start_point}到{end_point}）")
+                logger.debug("锁定目标虚线已创建（从%s到%s）", start_point, end_point)
             else:
                 self.target_path_line.setData(pos=dashed_line)
         else:
@@ -451,7 +535,7 @@ class GLVisualizationWidget(QFrame):
 
         self._path_lines_dirty = True
 
-        print(f"[GL] 预设路径已设置（贯穿）: {direction}")
+        logger.debug("预设路径已设置（贯穿）: %s", direction)
 
     def set_target_path(self, direction):
         """设置锁定路径（橙色虚线）- 贯穿整个空间"""
@@ -465,7 +549,7 @@ class GLVisualizationWidget(QFrame):
 
         self._path_lines_dirty = True
 
-        print(f"[GL] 目标路径已设置（贯穿）: {direction}")
+        logger.debug("目标路径已设置（贯穿）: %s", direction)
 
     def clear_path_lines(self):
         """清除所有路径虚线"""
@@ -482,7 +566,7 @@ class GLVisualizationWidget(QFrame):
 
         self._path_lines_dirty = True
 
-        print("[GL] 所有路径虚线已清除")
+        logger.debug("所有路径虚线已清除")
 
     def clear_trajectory(self):
         """清除轨迹"""
@@ -558,7 +642,7 @@ class GLVisualizationWidget(QFrame):
         self.view.addItem(self.head_mesh)
         self.head_mesh.setVisible(self.head_model_visible)
 
-        print(f"[GL] 头部模型已渲染: {len(vertices)} 顶点")
+        logger.info("头部模型已渲染: %d 顶点", len(vertices))
 
         verts = np.asarray(vertices, dtype=float)
         if len(verts) > 0:
@@ -586,23 +670,17 @@ class GLVisualizationWidget(QFrame):
         self.update()
 
     def set_puncture_point(self, point, normal):
-        """显示穿刺点标记和法线"""
-        #print(f"[GL] 正在标记穿刺点: {point}")
-
-        #  1. 显示Entry点球体标记
+        """显示穿刺点标记和法线。"""
+        # 1. 显示Entry点球体标记
         self.puncture_point_marker.resetTransform()
         self.puncture_point_marker.translate(*point)
         self.puncture_point_marker.setVisible(True)
 
-        #  2. 显示Entry点外圈（脉冲效果）
+        # 2. 显示Entry点外圈（脉冲效果）
         self.puncture_point_glow.setData(pos=np.array([point]))
         self.puncture_point_glow.setVisible(True)
 
-        #  3. 显示法线虚线（蓝色，400mm）
-        #self.set_preset_path(normal.tolist())
-
-        print(f"[GL] ✓ 穿刺点已标记")
-        #print(f"[GL] ✓ Entry-Target连线已显示，距离: {distance:.1f} mm")
+        logger.info("穿刺点已标记: %s", point)
 
     def clear_entry_markers(self):
         """仅清除 Entry 标记与 Entry–Target 连线，保留 Target。"""
@@ -613,7 +691,7 @@ class GLVisualizationWidget(QFrame):
             self.view.removeItem(self.entry_target_line)
             self.entry_target_line = None
 
-        print("[GL] Entry 标记已清除")
+        logger.debug("Entry 标记已清除")
 
     def clear_puncture_point(self):
         """清除 Entry 与 Target 及连线。"""
@@ -624,7 +702,7 @@ class GLVisualizationWidget(QFrame):
 
         self.clear_path_lines()
 
-        print("[GL] 穿刺点与 Target 标记已清除")
+        logger.debug("穿刺点与 Target 标记已清除")
 
     def set_bleeding_point(self, point):
         """设置 Target 点位置；point 为 None 时隐藏。"""
@@ -634,12 +712,12 @@ class GLVisualizationWidget(QFrame):
                 self.bleeding_point = None
             return
 
-        print(f"[GL] 正在标记 Target: {point}")
+        logger.debug("正在标记 Target: %s", point)
         self.bleeding_point = np.array(point, dtype=float)
         self.bleeding_marker.resetTransform()
         self.bleeding_marker.translate(*point)
         self.bleeding_marker.setVisible(True)
-        print(f"[GL] ✓ Target 已标记: {point}")
+        logger.info("Target 已标记: %s", point)
 
     def set_entry_target_line(self, entry_point, target_point):
         """显示 Entry–Target 连线；任一端为 None 时仅清除连线。"""
@@ -650,7 +728,7 @@ class GLVisualizationWidget(QFrame):
         if entry_point is None or target_point is None:
             return
 
-        print(f"[GL] 正在创建 Entry-Target 连线")
+        logger.debug("正在创建 Entry-Target 连线")
         entry = np.array(entry_point, dtype=float)
         target = np.array(target_point, dtype=float)
 
@@ -682,11 +760,7 @@ class GLVisualizationWidget(QFrame):
 
         self.view.addItem(self.entry_target_line)
 
-        print(f"[GL] ✓ Entry-Target连线已显示（反向延长）")
-        print(f"[GL]   起点（Target）: {target}")
-        print(f"[GL]   终点（Entry外）: {end_point}")
-        print(f"[GL]   原始距离: {distance:.1f} mm")
-        print(f"[GL]   总长度: {distance + extension_length:.1f} mm")
+        logger.debug("Entry-Target连线已显示（反向延长），距离=%.1f mm", distance)
 
     def set_needle_tip_position(self, position):
         """设置针尖固定位置（初始化+穿刺模式）"""
@@ -694,17 +768,17 @@ class GLVisualizationWidget(QFrame):
         self._fixed_tip_position = self.tip_position.copy()
         self._use_fixed_tip = True
         self._update_needle_visualization()
-        print(f"[GL] ✓ 针尖固定位置已设置: {self.tip_position}")
+        logger.info("针尖固定位置已设置: %s", self.tip_position)
 
     def clear_fixed_tip(self):
         """解除针尖固定，允许 update_data 传入的动态位置生效"""
         self._use_fixed_tip = False
         if hasattr(self, '_fixed_tip_position'):
             delattr(self, '_fixed_tip_position')
-        print("[GL] 针尖固定已解除，进入动态跟踪模式")
+        logger.info("针尖固定已解除，进入动态跟踪模式")
 
     def _update_needle_visualization(self):
-        """更新针体：白线两端 + 方块中心落在端点。"""
+        """更新针体：白线两端 + 方块中心落在端点 + 运动箭头。"""
         tip, tail = self._needle_endpoints()
         self.imu_position = tail.astype(np.float32)
 
@@ -717,7 +791,14 @@ class GLVisualizationWidget(QFrame):
         except Exception as e:
             if not self._box_error_shown:
                 self._box_error_shown = True
-                print(f"[GL 错误] 立方体更新失败: {e}")
+                logger.error("立方体更新失败: %s", e, exc_info=True)
+
+        # 更新运动箭头（指向针尖）
+        direction = tip - tail
+        nd = float(np.linalg.norm(direction))
+        if nd > 1e-9:
+            direction = direction / nd
+            self._update_arrow_transform(tip, direction)
 
     def update_needle_direction(self, direction):
         """更新针体方向（保持针尖位置不变）"""
@@ -730,7 +811,7 @@ class GLVisualizationWidget(QFrame):
         """清除针尖固定位置（恢复原点模式）"""
         self._use_fixed_tip = False
         self._fixed_tip_position = np.array([0.0, 0.0, 0.0])
-        print("[GL] ✓ 针尖固定位置已清除，恢复原点模式")
+        logger.info("针尖固定位置已清除，恢复原点模式")
 
     def get_fixed_tip_position(self):
         """获取当前固定的针尖位置"""

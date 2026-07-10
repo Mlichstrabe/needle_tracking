@@ -1,4 +1,8 @@
 """侧边栏 UI 组件"""
+import logging
+import math
+import os
+
 import numpy as np
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -7,11 +11,12 @@ from PyQt5.QtWidgets import (
     QToolButton,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-import math
 from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPolygonF
 from PyQt5.QtCore import QRect, QPointF
 
 from ui.widgets.ui_helpers import set_button_variant, set_label_role, apply_panel_chrome
+
+logger = logging.getLogger(__name__)
 
 
 def _hint_role_for_state(state):
@@ -430,16 +435,16 @@ class DeviceConnectionPanel(QWidget):
         self.port_combo.clear()
         try:
             import serial.tools.list_ports
-            ports = serial.tools.list_ports.comports()
-            for p in sorted(ports):
-                label = f"{p.device} - {p.description}" if p.description else p.device
-                self.port_combo.addItem(p.device, p.device)
+            ports = list(serial.tools.list_ports.comports())
+            for p in sorted(ports, key=lambda x: x.device):
+                display = f"{p.device} — {p.description}" if p.description else p.device
+                self.port_combo.addItem(display, p.device)
             if self.port_combo.count() == 0:
-                self.port_combo.addItem("(无可用串口)", "")
-            print(f"[OK] 扫描到 {self.port_combo.count()} 个串口")
+                self.port_combo.addItem("(无可用串口 — 点击 ↻ 刷新)", "")
+            logger.info("扫描到 %d 个串口", self.port_combo.count())
         except ImportError:
-            self.port_combo.addItem("COM3", "COM3")  # 降级默认
-            print("[WARN] serial.tools.list_ports 不可用，使用默认 COM3")
+            self.port_combo.addItem("(pyserial 未安装)", "")
+            logger.warning("serial.tools.list_ports 不可用")
 
     def _connect_signals(self):
         """连接内部信号"""
@@ -544,11 +549,13 @@ class CTModelPanel(QWidget):
         layout.addStretch()
 
     def _on_load_clicked(self):
-        """选择文件夹"""
-        from PyQt5.QtWidgets import QFileDialog
-        folder = QFileDialog.getExistingDirectory(self, "选择DICOM文件夹")
-        if folder:
-            self.load_clicked.emit(folder)
+        """加载固定路径 DICOM 文件夹（CT6）。"""
+        default_folder = r"C:\Users\Lu\PyCharmMiscProject\needle_tracking\CT6"
+        if not os.path.isdir(default_folder):
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "路径不存在", f"默认 DICOM 路径不存在:\n{default_folder}")
+            return
+        self.load_clicked.emit(default_folder)
 
     def set_loading(self, is_loading):
         """设置加载状态"""

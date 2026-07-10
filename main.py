@@ -1,4 +1,5 @@
 """程序入口"""
+import logging
 import os
 import sys
 
@@ -14,6 +15,11 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from core.logging_config import setup_logging
+
+setup_logging(level=logging.DEBUG, log_dir=_ROOT)
+logger = logging.getLogger(__name__)
+
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 
@@ -27,6 +33,7 @@ from ui.main_window import MainWindow
 
 
 def main():
+    logger.info("启动应用...")
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     base_font = app.font()
