@@ -219,27 +219,8 @@ class GLVisualizationWidget(QFrame):
         )
         self.view.addItem(self.imu_box)
 
-        # ── 针体运动箭头（锥形，指向针尖）──
-        self._arrow_offset_mm = 30.0
-        self._arrow_height = 15.0
-        self._arrow_radius = 3.0
-        self._arrow_segments = 8
-        arrow_verts, arrow_faces = self._create_cone_mesh(
-            self._arrow_height, self._arrow_radius, self._arrow_segments
-        )
-        self.needle_arrow = gl.GLMeshItem(
-            vertexes=arrow_verts,
-            faces=arrow_faces,
-            color=(1.0, 0.5, 0.0, 0.85),
-            shader='shaded',
-            glOptions='translucent',
-            smooth=True,
-        )
-        self.view.addItem(self.needle_arrow)
-
         logger.info("针杆线条已创建（白色，5px）")
         logger.info("立方体标记已创建（针尖5mm红色，IMU4mm绿色）")
-        logger.info("针体箭头已创建（橙色锥形，指向针尖）")
 
     def _set_box_center(self, box, center, half_size):
         """GLBoxItem 顶点从原点延伸，translate 使方块几何中心落在 center。"""
@@ -248,69 +229,6 @@ class GLVisualizationWidget(QFrame):
         transform = QMatrix4x4()
         transform.translate(float(c[0] - h[0]), float(c[1] - h[1]), float(c[2] - h[2]))
         box.setTransform(transform)
-
-    @staticmethod
-    def _create_cone_mesh(height: float, radius: float, segments: int = 8):
-        """生成沿 +Z 方向的锥体顶点/面（尖端在 +Z，底面在 XY 平面）。"""
-        vertices = []
-        # 尖端
-        vertices.append([0.0, 0.0, height])
-        # 底面圆周
-        for i in range(segments):
-            a = 2.0 * np.pi * i / segments
-            vertices.append([radius * np.cos(a), radius * np.sin(a), 0.0])
-        vertices = np.array(vertices, dtype=float)
-
-        faces = []
-        for i in range(segments):
-            nxt = (i + 1) % segments
-            faces.append([0, i + 1, nxt + 1])
-        faces = np.array(faces, dtype=int)
-        return vertices, faces
-
-    def _rotation_matrix_from_to(self, src, dst):
-        """将单位向量 src 旋转到 dst 的 3×3 旋转矩阵。"""
-        a = np.asarray(src, dtype=float).reshape(3)
-        b = np.asarray(dst, dtype=float).reshape(3)
-        a = a / np.linalg.norm(a)
-        b = b / np.linalg.norm(b)
-        dot = float(np.clip(np.dot(a, b), -1.0, 1.0))
-        if dot > 1.0 - 1e-8:
-            return np.eye(3, dtype=float)
-        if dot < -1.0 + 1e-8:
-            ortho = np.array([1.0, 0.0, 0.0], dtype=float)
-            if abs(float(np.dot(a, ortho))) > 0.9:
-                ortho = np.array([0.0, 1.0, 0.0], dtype=float)
-            axis = ortho / np.linalg.norm(ortho)
-        else:
-            axis = np.cross(a, b)
-            axis = axis / np.linalg.norm(axis)
-        angle = np.arccos(dot)
-        x, y, z = axis
-        k = np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]], dtype=float)
-        return np.eye(3, dtype=float) + np.sin(angle) * k + (1.0 - np.cos(angle)) * (k @ k)
-
-    def _update_arrow_transform(self, pos, direction):
-        """更新箭头位置和旋转，使箭头尖端指向 pos（针尖）。"""
-        d = np.asarray(direction, dtype=float).reshape(3)
-        n = float(np.linalg.norm(d))
-        if n < 1e-9:
-            d = np.array([0.0, 0.0, -1.0])
-        else:
-            d = d / n
-        # 箭头底座中心：距针尖 _arrow_offset_mm 处（沿 direction 反方向）
-        arrow_base = np.asarray(pos, dtype=float).reshape(3) - d * self._arrow_offset_mm
-        # 锥体默认尖端指向 +Z；需要旋转使 +Z 对齐到 -d（指向针尖）
-        rot = self._rotation_matrix_from_to([0.0, 0.0, 1.0], -d)
-        transform = QMatrix4x4()
-        for r in range(3):
-            for c in range(3):
-                transform[r, c] = float(rot[r, c])
-        transform[0, 3] = float(arrow_base[0])
-        transform[1, 3] = float(arrow_base[1])
-        transform[2, 3] = float(arrow_base[2])
-        transform[3, 3] = 1.0
-        self.needle_arrow.setTransform(transform)
 
     def _needle_endpoints(self):
         """针体直线两端：针尖（tip）与针尾（IMU）。"""
@@ -778,7 +696,7 @@ class GLVisualizationWidget(QFrame):
         logger.info("针尖固定已解除，进入动态跟踪模式")
 
     def _update_needle_visualization(self):
-        """更新针体：白线两端 + 方块中心落在端点 + 运动箭头。"""
+        """更新针体：白线两端 + 方块中心落在端点。"""
         tip, tail = self._needle_endpoints()
         self.imu_position = tail.astype(np.float32)
 
@@ -792,13 +710,6 @@ class GLVisualizationWidget(QFrame):
             if not self._box_error_shown:
                 self._box_error_shown = True
                 logger.error("立方体更新失败: %s", e, exc_info=True)
-
-        # 更新运动箭头（指向针尖）
-        direction = tip - tail
-        nd = float(np.linalg.norm(direction))
-        if nd > 1e-9:
-            direction = direction / nd
-            self._update_arrow_transform(tip, direction)
 
     def update_needle_direction(self, direction):
         """更新针体方向（保持针尖位置不变）"""
