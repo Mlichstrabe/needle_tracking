@@ -696,6 +696,13 @@ class GLVisualizationWidget(QFrame):
         self._update_needle_visualization()
         print(f"[GL] ✓ 针尖固定位置已设置: {self.tip_position}")
 
+    def clear_fixed_tip(self):
+        """解除针尖固定，允许 update_data 传入的动态位置生效"""
+        self._use_fixed_tip = False
+        if hasattr(self, '_fixed_tip_position'):
+            delattr(self, '_fixed_tip_position')
+        print("[GL] 针尖固定已解除，进入动态跟踪模式")
+
     def _update_needle_visualization(self):
         """更新针体：白线两端 + 方块中心落在端点。"""
         tip, tail = self._needle_endpoints()

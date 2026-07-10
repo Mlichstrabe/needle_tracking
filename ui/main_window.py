@@ -55,19 +55,26 @@ from ui.widgets.ui_helpers import configure_side_scroll, set_label_role, apply_p
 def default_intracerebral_hemorrhage_target_mm(bbox):
     """
     默认出血靶点：右侧豆状核/基底节区（高血压脑出血最常见部位之一）。
-    头模已几何中心在原点；偏移相对半轴长（解剖：外侧、略前、中线偏上）。
+
+    加载后场景系方向（见 core/dicom_loader.py 的两次旋转链）：
+        X = 前后（+ 前方）
+        Y = 上下（+ 上方）
+        Z = 左右（+ 右方）
+
+    临床常用偏移（mm）：前 ~15 mm、上 ~25 mm、右 ~30 mm。
+    最终 clip 到 bbox 半轴的 85%，防止不同头围下落到模型外。
     """
-    size = np.asarray(bbox["size"], dtype=float).reshape(3)
-    hx, hy, hz = size[0] / 2.0, size[1] / 2.0, size[2] / 2.0
-    # 文献/教学常用：距中线约 25–35 mm；此处按比例适配不同头围
-    return np.array(
+    offset = np.array(
         [
-            0.34 * hx,   # 右半球外侧（豆状核）
-            0.16 * hy,   # 略向额侧
-            0.12 * hz,   # 颅顶–下颌中上部（基底节层面）
+            -15.0,   # 略向额侧（前方为正 → 取负）
+            25.0,    # 基底节层面（中央偏上）
+            30.0,    # 右侧外侧（豆状核区）
         ],
         dtype=float,
     )
+    size = np.asarray(bbox["size"], dtype=float).reshape(3)
+    half = size / 2.0
+    return np.clip(offset, -half * 0.85, half * 0.85)
 
 
 class MainWindow(QMainWindow):
@@ -121,6 +128,10 @@ class MainWindow(QMainWindow):
         self._puncture_plan_depth = 0.0
         self._puncture_current_depth = 0.0
         self._puncture_in_progress = False
+        # 进针完成标志：避免完成后 tick 反复 enable_puncture_mode 导致进度条闪烁
+        self._puncture_finished = False
+        # 进针期间用 override tip 接管针尖位置（避免每帧 IMU 数据退回原点）
+        self._puncture_override_tip = None
 
         self._refresh_workflow_steps()
         self._apply_operation_mode_ui()
@@ -512,6 +523,15 @@ class MainWindow(QMainWindow):
 
     def _calculate_positions_fast(self, quaternion):
         direction = needle_axis_for_position(quaternion)
+
+        # 进针 override 优先：避免 clear_fixed_tip 后针尖漂移到原点
+        if self._puncture_override_tip is not None:
+            tip_pos = list(self._puncture_override_tip)
+            imu_pos = imu_position_from_tip(
+                tip_pos, direction, float(self.needle_length)
+            )
+            return np.array(imu_pos), np.array(tip_pos)
+
         fixed_tip = self.gl_widget.get_fixed_tip_position()
         tip_pos, skip = tip_position_from_fixed(fixed_tip)
         if skip:
@@ -1000,6 +1020,10 @@ class MainWindow(QMainWindow):
         self.puncture_point = None
         self.puncture_normal = None
         self._selecting_target = False
+        # 清除进针 override，避免重选时残留旧 tip 位置
+        self._puncture_override_tip = None
+        self._puncture_current_depth = 0.0
+        self._puncture_in_progress = False
         self.gl_widget.clear_entry_markers()
         self.gl_widget.set_entry_target_line(None, None)
         self.puncture_panel.clear()
@@ -1120,42 +1144,57 @@ class MainWindow(QMainWindow):
         self._puncture_tick(angle_error_deg)
 
     # ── 进针逻辑 ───────────────────────────────────────────────────────────────
-    PUNCTURE_DURATION_S = 5.0
+    PUNCTURE_DURATION_S = 10.0
 
     def _puncture_tick(self, angle_error_deg: float):
-        """每 alignment_timer 触发一次（10 ms）：判角、推进、更新 UI + 3D 针尖。"""
+        """每 alignment_timer 触发一次（10 ms）：判角、推进、更新 UI + 针尖 override。"""
         if not self._puncture_ready():
+            return
+        # 已完成进针：不再 tick，避免 UI 闪烁
+        if self._puncture_finished:
             return
 
         thr = self._ALIGN_THRESHOLD_DEG
         aligned = angle_error_deg < thr
 
         if not aligned:
+            # 偏离：暂停进针，但保留当前深度（不退回 0），override tip 仍按当前深度
             if self._puncture_in_progress:
                 self._puncture_in_progress = False
                 self.puncture_panel.update_puncture_depth(
                     self._puncture_current_depth, self._puncture_plan_depth
                 )
+            return
+
+        if not self._puncture_in_progress:
+            # 首次推进：解除 GL widget 的 fixed_tip 拦截，让 override tip 接管针尖位置
+            self.gl_widget.clear_fixed_tip()
+            self._puncture_in_progress = True
+            self.puncture_panel.enable_puncture_mode(self._puncture_plan_depth)
+            # 进度条/剩余时间显示对齐
+            self.puncture_panel.update_puncture_depth(
+                self._puncture_current_depth, self._puncture_plan_depth
+            )
+
+        dt = 0.01
+        self._puncture_current_depth += (
+            self._puncture_plan_depth / self.PUNCTURE_DURATION_S
+        ) * dt
+
+        if self._puncture_current_depth >= self._puncture_plan_depth:
+            self._puncture_current_depth = self._puncture_plan_depth
+            self._puncture_in_progress = False
+            self._puncture_finished = True
+            self.puncture_panel.set_puncture_done()
         else:
-            if not self._puncture_in_progress:
-                self._puncture_in_progress = True
-                self.puncture_panel.enable_puncture_mode(self._puncture_plan_depth)
+            self.puncture_panel.update_puncture_depth(
+                self._puncture_current_depth, self._puncture_plan_depth
+            )
 
-            dt = 0.01
-            self._puncture_current_depth += (
-                self._puncture_plan_depth / self.PUNCTURE_DURATION_S
-            ) * dt
-
-            if self._puncture_current_depth >= self._puncture_plan_depth:
-                self._puncture_current_depth = self._puncture_plan_depth
-                self._puncture_in_progress = False
-                self.puncture_panel.set_puncture_done()
-            else:
-                self.puncture_panel.update_puncture_depth(
-                    self._puncture_current_depth, self._puncture_plan_depth
-                )
-
-            self._apply_tip_at_depth(self._puncture_current_depth)
+        # 每 tick 更新 override tip，让每帧 IMU 数据都用这个 tip 算 imu_pos
+        entry = np.asarray(self.puncture_point, dtype=float)
+        dir_w = np.asarray(self.target_direction_world, dtype=float)
+        self._puncture_override_tip = entry + dir_w * self._puncture_current_depth
 
     def _puncture_ready(self) -> bool:
         return (
@@ -1165,18 +1204,22 @@ class MainWindow(QMainWindow):
         )
 
     def _apply_tip_at_depth(self, depth_mm: float):
+        """仅更新 override tip；下一帧 IMU 数据会自动用 override 算 imu_pos 并刷新 3D。"""
+        if self.puncture_point is None or not hasattr(self, "target_direction_world"):
+            return
         entry = np.asarray(self.puncture_point, dtype=float)
         dir_w = np.asarray(self.target_direction_world, dtype=float)
-        tip = entry + dir_w * depth_mm
-        imu_pos = tip - np.asarray(self._needle_direction, dtype=float) * self.needle_length
-        self.gl_widget.update_data(imu_pos, tip)
+        self._puncture_override_tip = entry + dir_w * depth_mm
 
     def _on_puncture_reset(self):
         self._puncture_current_depth = 0.0
         self._puncture_in_progress = False
+        self._puncture_finished = False
+        self._puncture_override_tip = None
+        # 重置时重新把 fixed_tip 设回 Entry，让 update_data 拦截正常（非进针态）
+        if self.puncture_point is not None:
+            self.gl_widget.set_needle_tip_position(self.puncture_point)
         self.puncture_panel.reset_puncture_ui()
-        if self.puncture_point is not None and hasattr(self, "target_direction_world"):
-            self._apply_tip_at_depth(0.0)
 
     def _on_target_set(self):
         self._puncture_current_depth = 0.0
