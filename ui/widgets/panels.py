@@ -510,14 +510,47 @@ class CTModelPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         apply_panel_chrome(self)
+        self._last_dicom_path = None
         self._init_ui()
+        self._restore_last_path()
+
+    def _restore_last_path(self):
+        """从 config/ 恢复上次使用的 DICOM 路径。"""
+        try:
+            import json
+            cfg_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "config", "dicom_last_path.json"
+            )
+            if os.path.isfile(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    self._last_dicom_path = json.load(f).get("path")
+        except Exception:
+            self._last_dicom_path = None
+
+    def _save_last_path(self, path):
+        """将选择的路径持久化到 config/。"""
+        self._last_dicom_path = path
+        try:
+            import json
+            cfg_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "config"
+            )
+            os.makedirs(cfg_dir, exist_ok=True)
+            cfg_path = os.path.join(cfg_dir, "dicom_last_path.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"path": path}, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(2, 2, 2, 2)
 
-        self.load_btn = QPushButton("选择 DICOM 文件夹")
+        self.load_btn = QPushButton("加载 CT 模型")
+        self.load_btn.setToolTip("选择 DICOM 文件夹并加载 CT 模型")
         set_button_variant(self.load_btn, "primary")
         self.load_btn.clicked.connect(self._on_load_clicked)
         layout.addWidget(self.load_btn)
@@ -549,13 +582,16 @@ class CTModelPanel(QWidget):
         layout.addStretch()
 
     def _on_load_clicked(self):
-        """加载固定路径 DICOM 文件夹（CT6）。"""
-        default_folder = r"C:\Users\Lu\PyCharmMiscProject\needle_tracking\CT6"
-        if not os.path.isdir(default_folder):
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "路径不存在", f"默认 DICOM 路径不存在:\n{default_folder}")
+        """弹出文件夹选择对话框加载 DICOM；优先使用上次路径。"""
+        from PyQt5.QtWidgets import QFileDialog
+        start_dir = self._last_dicom_path or ""
+        folder = QFileDialog.getExistingDirectory(
+            self, "选择 DICOM 文件夹", start_dir,
+        )
+        if not folder:
             return
-        self.load_clicked.emit(default_folder)
+        self._save_last_path(folder)
+        self.load_clicked.emit(folder)
 
     def set_loading(self, is_loading):
         """设置加载状态"""
@@ -599,6 +635,11 @@ class PuncturePointPanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
         layout.setContentsMargins(8, 8, 8, 8)
+
+        # 编号顺序：① Entry → ② Target → ③ 进针
+        step1_title = QLabel("① 选择 Entry")
+        step1_title.setObjectName("SectionTitle")
+        layout.addWidget(step1_title)
 
         self.hint_label = QLabel("请先导入 CT 模型")
         self.hint_label.setWordWrap(True)
@@ -648,7 +689,7 @@ class PuncturePointPanel(QFrame):
 
         # 重选按钮
         self.reselect_btn = QPushButton("重新选择穿刺点")
-        set_button_variant(self.reselect_btn, "danger")
+        set_button_variant(self.reselect_btn, "secondary")
         self.reselect_btn.clicked.connect(self.reselect_clicked.emit)
         self.reselect_btn.setVisible(False)
         layout.addWidget(self.reselect_btn)
@@ -657,21 +698,23 @@ class PuncturePointPanel(QFrame):
         target_title.setObjectName("SectionTitle")
         layout.addWidget(target_title)
 
-        self.target_hint_label = QLabel("Entry 选定后可在 3D 上选 Target，或使用默认位置")
+        self.target_hint_label = QLabel("Entry 选定后将自动使用默认 Target，点击续接即可")
         self.target_hint_label.setWordWrap(True)
-        _apply_hint_state(self.target_hint_label, "Entry 选定后可在 3D 上选 Target，或使用默认位置", "default")
+        _apply_hint_state(self.target_hint_label, "Entry 选定后将自动使用默认 Target，点击续接即可", "default")
         layout.addWidget(self.target_hint_label)
 
         target_btn_row = QHBoxLayout()
-        self.target_pick_btn = QPushButton("在 3D 上选 Target")
+        self.target_pick_btn = QPushButton("续接（使用默认 Target）")
+        self.target_pick_btn.setToolTip("使用默认 Target 并继续对准流程")
         set_button_variant(self.target_pick_btn, "primary")
-        self.target_pick_btn.clicked.connect(self.start_target_selection_clicked.emit)
+        self.target_pick_btn.clicked.connect(self.use_default_target_clicked.emit)
         self.target_pick_btn.setEnabled(False)
         target_btn_row.addWidget(self.target_pick_btn)
 
-        self.target_default_btn = QPushButton("使用默认")
+        self.target_default_btn = QPushButton("自选 Target（3D 点击）")
+        self.target_default_btn.setToolTip("在 3D 头部表面手动点击选择 Target")
         set_button_variant(self.target_default_btn, "ghost")
-        self.target_default_btn.clicked.connect(self.use_default_target_clicked.emit)
+        self.target_default_btn.clicked.connect(self.start_target_selection_clicked.emit)
         self.target_default_btn.setEnabled(False)
         target_btn_row.addWidget(self.target_default_btn)
         layout.addLayout(target_btn_row)
@@ -707,9 +750,7 @@ class PuncturePointPanel(QFrame):
 
         self._init_puncture_ui(layout)
 
-        step_title = QLabel("① 选择 Entry")
-        step_title.setObjectName("SectionTitle")
-        layout.insertWidget(0, step_title)
+    # 不再使用 insertWidget hack，编号已通过正确的添加顺序保证
 
     def _init_puncture_ui(self, layout):
         self._puncture_in_progress = False
@@ -722,7 +763,7 @@ class PuncturePointPanel(QFrame):
         sep.setObjectName("Separator")
         layout.addWidget(sep)
 
-        hdr = QLabel("③ 进针进度")
+        hdr = QLabel("④ 进针进度")
         hdr.setObjectName("SectionTitle")
         layout.addWidget(hdr)
 
@@ -870,7 +911,7 @@ class PuncturePointPanel(QFrame):
             self.target_default_btn.setEnabled(True)
             _apply_hint_state(
                 self.target_hint_label,
-                "在 3D 头部表面点击选 Target，或「使用默认」",
+                "已自动设置默认 Target，点击「续接」确认",
                 "warn",
             )
 
@@ -920,13 +961,13 @@ class PuncturePointPanel(QFrame):
         if self.coord_widget.isVisible():
             _apply_hint_state(
                 self.target_hint_label,
-                "在 3D 头部表面点击选 Target，或「使用默认」",
+                "点击「续接」确认默认 Target，或「自选 Target」手动指定",
                 "default",
             )
         else:
             _apply_hint_state(
                 self.target_hint_label,
-                "Entry 选定后可在 3D 上选 Target，或使用默认位置",
+                "Entry 选定后将自动使用默认 Target，点击续接即可",
                 "default",
             )
 

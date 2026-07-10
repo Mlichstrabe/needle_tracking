@@ -205,9 +205,16 @@ class MainWindow(QMainWindow):
         title.setObjectName("AppTitle")
         top.addWidget(title)
         top.addStretch()
-        self.header_status = QLabel("IMU 未连接")
-        self.header_status.setObjectName("HeaderStatusPill")
-        top.addWidget(self.header_status)
+
+        # 4 个全局状态 Chips
+        self.header_chips = {}
+        for key, label in [("ct", "CT"), ("entry", "Entry"), ("target", "Target"), ("imu", "IMU")]:
+            chip = QLabel(f"{label} ?")
+            chip.setObjectName("StatusChip")
+            chip.setProperty("chipState", "pending")
+            top.addWidget(chip)
+            self.header_chips[key] = chip
+
         outer.addLayout(top)
 
         self.workflow_bar = WorkflowStepBar()
@@ -327,6 +334,7 @@ class MainWindow(QMainWindow):
                 states[2] = "done"
                 states[3] = "active"
             self.workflow_bar.set_states(states)
+            self._update_header_status()
             return
 
         states = ["pending", "pending", "pending", "pending"]
@@ -344,25 +352,37 @@ class MainWindow(QMainWindow):
                 states[2] = "done"
                 states[3] = "active"
         self.workflow_bar.set_states(states)
+        self._update_header_status()
 
     def _update_header_status(self):
+        def _set_chip(key, state, text=None):
+            chip = self.header_chips.get(key)
+            if chip is None:
+                return
+            labels = {"ct": "CT", "entry": "Entry", "target": "Target", "imu": "IMU"}
+            label = labels.get(key, key)
+            display = text or f"{label} ✓" if state == "done" else f"{label} ?"
+            chip.setText(display)
+            chip.setProperty("chipState", state)
+            chip.style().unpolish(chip)
+            chip.style().polish(chip)
+
+        _set_chip("ct", "done" if self._ct_model_loaded else "pending")
+        _set_chip("entry", "done" if self.puncture_point is not None else "pending")
+        _set_chip("target", "done" if self.target_point is not None else "pending")
+
         if self.device_manager.is_connected:
             fps = getattr(self, "_display_fps", 0)
-            text = f"IMU 已连接 · {fps:.0f} Hz" if fps > 0 else "IMU 已连接"
-            role = "ok"
+            text = f"IMU {fps:.0f}Hz" if fps > 0 else "IMU ✓"
+            _set_chip("imu", "done", text)
         else:
-            text = "IMU 未连接"
-            role = "muted"
-        self.header_status.setText(text)
-        self.header_status.setProperty("role", role)
-        self.header_status.style().unpolish(self.header_status)
-        self.header_status.style().polish(self.header_status)
+            _set_chip("imu", "pending")
 
     def _apply_window_geometry(self):
         """按当前屏幕可用区域设置窗口大小，避免超出显示器导致面板被裁切。"""
         screen = QApplication.primaryScreen()
         if screen is None:
-            self.setMinimumSize(1024, 680)
+            self.setMinimumSize(900, 600)
             self.resize(1280, 800)
             return
 
@@ -371,12 +391,12 @@ class MainWindow(QMainWindow):
         max_w = max(900, avail.width() - margin)
         max_h = max(600, avail.height() - margin)
 
-        min_w = min(1024, max_w)
-        min_h = min(680, max_h)
+        min_w = min(900, max_w)
+        min_h = min(600, max_h)
         self.setMinimumSize(min_w, min_h)
 
-        target_w = int(min(max_w, max(min_w, avail.width() * 0.94)))
-        target_h = int(min(max_h, max(min_h, avail.height() * 0.94)))
+        target_w = int(min(max_w, max(min_w, avail.width() * 0.88)))
+        target_h = int(min(max_h, max(min_h, avail.height() * 0.78)))
         self.resize(target_w, target_h)
 
         frame = self.frameGeometry()
@@ -618,7 +638,7 @@ class MainWindow(QMainWindow):
 
     def _on_vertical_calibrate(self):
         if not self.device_manager.is_connected:
-            QMessageBox.warning(self, "未连接", "请先连接 IMU 后再做竖直校准。")
+            logger.warning("竖直校准失败：IMU 未连接")
             return
         capture_vertical_display_offset(self._current_quaternion)
         self._smooth_quat = None
@@ -628,12 +648,9 @@ class MainWindow(QMainWindow):
         self._persist_imu_geometry()
         self.imu_panel.set_vertical_calibrate_status(True)
         tilt = needle_tilt_from_scene_down_deg(self._needle_direction)
-        QMessageBox.information(
-            self,
-            "竖直标定完成",
-            f"已将当前针轴映射到场景竖直向下 (0,0,-1)。\n\n"
-            f"标定后偏竖直角 ≈ {tilt:.1f}°\n"
-            f"请转动手柄验证 3D 针体是否跟手。",
+        logger.info(
+            "竖直标定完成 — 偏竖直角 %.1f°, 配置已写入 config/imu_geometry.json",
+            tilt,
         )
 
     def _on_vertical_recalibrate(self):
@@ -672,18 +689,12 @@ class MainWindow(QMainWindow):
 
     def _on_save_viewport(self):
         self.gl_widget.capture_viewport_to_config()
-        QMessageBox.information(
-            self,
-            "默认视角已保存",
-            "当前 3D 相机已写入 config/viewport.json。\n\n"
-            "之后点击「重置视角」将回到此方位。",
-        )
+        logger.info("默认视角已保存到 config/viewport.json")
 
     def _on_calibration_requested(self):
         """执行传感器校准序列：磁力计 + 陀螺仪零偏"""
         if not self.device_manager.is_connected:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "未连接", "请先连接设备后再校准")
+            logger.warning("传感器校准：IMU 未连接，跳过")
             return
 
         from PyQt5.QtWidgets import QMessageBox
@@ -722,9 +733,7 @@ class MainWindow(QMainWindow):
         self.device_manager.calibrate_magnetic_end()
         self.connection_panel.btn_calibrate.setEnabled(True)
         self.connection_panel.btn_calibrate.setText("校准传感器")
-        print("=== 传感器校准完成 ===")
-        from PyQt5.QtWidgets import QMessageBox
-        QMessageBox.information(self, "校准完成", "传感器校准已完成！\n\n• 陀螺仪零偏已记录\n• 磁力计校准已保存")
+        logger.info("传感器校准完成：陀螺仪零偏已记录，磁力计校准已保存")
 
     def _on_simulation_started(self):
         if self._is_observe_mode():
@@ -915,7 +924,7 @@ class MainWindow(QMainWindow):
             self._start_alignment_monitoring()
 
     def _on_target_point_selected(self, point):
-        print(f"[Main] Target 已选择: {point}")
+        logger.info("Target 手动选择: %s", point)
         self._selecting_target = False
         self.target_point = np.asarray(point, dtype=float).reshape(3)
         if self.puncture_selector:
@@ -925,21 +934,17 @@ class MainWindow(QMainWindow):
             )
         self.puncture_panel.set_target_selecting_mode(False)
         self._on_target_set()
-        QMessageBox.information(
-            self,
-            "Target 已选择",
-            f"Target: [{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, "
-            f"{self.target_point[2]:.1f}] mm\n"
-            f"规划深度: {self._puncture_plan_depth:.1f} mm\n\n"
-            f"下一步：连接 IMU 并对准红色 Target。",
-            QMessageBox.Ok,
+        logger.info(
+            "Target 已设置: [%.1f, %.1f, %.1f] mm, 规划深度 %.1f mm",
+            self.target_point[0], self.target_point[1], self.target_point[2],
+            self._puncture_plan_depth,
         )
 
     def _on_start_target_selection(self):
         if self._is_observe_mode():
             return
         if self.puncture_point is None:
-            QMessageBox.warning(self, "请先选 Entry", "请先完成 Entry 点选择。")
+            logger.warning("Target 选择：Entry 未设置，跳过")
             return
         if not self.puncture_selector:
             return
@@ -971,13 +976,10 @@ class MainWindow(QMainWindow):
             self.puncture_selector.setEnabled(False)
         self.puncture_panel.set_target_selecting_mode(False)
         self._on_target_set()
-        QMessageBox.information(
-            self,
-            "已使用默认 Target",
-            f"默认：右侧豆状核/基底节区（相对头模几何中心）\n\n"
-            f"[{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, {self.target_point[2]:.1f}] mm\n"
-            f"规划深度: {self._puncture_plan_depth:.1f} mm",
-            QMessageBox.Ok,
+        logger.info(
+            "续接 — 使用默认 Target: [%.1f, %.1f, %.1f] mm, 规划深度 %.1f mm",
+            self.target_point[0], self.target_point[1], self.target_point[2],
+            self._puncture_plan_depth,
         )
 
     def _on_puncture_point_selected(self, point, normal):
@@ -1014,23 +1016,14 @@ class MainWindow(QMainWindow):
 
         self._on_target_set()
 
-        QMessageBox.information(
-            self,
-            "Entry 已选择",
-            f"Entry: [{point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f}] mm\n"
-            f"规划深度: {self._puncture_plan_depth:.1f} mm\n\n"
-            f"下一步：连接 IMU 并对准红色 Target。",
-            QMessageBox.Ok,
+        logger.info(
+            "Entry 已选择: [%.1f, %.1f, %.1f] mm, 规划深度 %.1f mm",
+            point[0], point[1], point[2], self._puncture_plan_depth,
         )
 
     def _on_start_selection(self):
         if self._is_observe_mode():
-            QMessageBox.information(
-                self,
-                "当前为观察模式",
-                "选择 Entry 需使用「穿刺训练」模式。\n\n"
-                "请在左侧「设备 · 串口」中将工作模式切换为「穿刺训练（需 CT + Entry）」。",
-            )
+            logger.info("观察模式下跳过 Entry 选择")
             return
         print("[Main] 🎯 开始选择穿刺点模式")
         if not self.puncture_selector:
@@ -1075,16 +1068,9 @@ class MainWindow(QMainWindow):
         if self._is_observe_mode():
             self.gl_widget._camera_adjusted = False
             self.gl_widget.set_needle_tip_position([0.0, 0.0, 0.0])
-            print("[Main] ✓ 观察模式：针尖已锚定世界原点 [0, 0, 0]")
+            logger.info("观察模式：针尖已锚定世界原点 [0, 0, 0]")
             self.alignment_hud.set_observe_mode(True, connected=True)
             self._refresh_workflow_steps()
-            QMessageBox.information(
-                self,
-                "✓ 已连接（观察模式）",
-                "针尖固定在坐标原点 [0, 0, 0]。\n\n"
-                "转动探针即可在 3D 视图中观察针体姿态。",
-                QMessageBox.Ok,
-            )
             return
 
         if self.puncture_point is None:
@@ -1125,16 +1111,9 @@ class MainWindow(QMainWindow):
         self._start_alignment_monitoring()
         self._refresh_workflow_steps()
 
-        QMessageBox.information(
-            self,
-            "✓ 初始姿态已校准",
-            "初始姿态已成功校准！\n\n"
-            "当前假设：\n"
-            "• 针尖位置 = Entry点\n"
-            "• 针体方向 = 竖直向下（重力方向）\n\n"
-            "下一步：\n"
-            "调整针体姿态，使其对准Target点（红色球）",
-            QMessageBox.Ok,
+        logger.info(
+            "初始姿态已校准 — 针尖=%s, 针体=竖直向下, 目标方向=%s",
+            self.puncture_point, self.target_direction_world,
         )
 
     def _start_alignment_monitoring(self):
@@ -1156,6 +1135,13 @@ class MainWindow(QMainWindow):
         angle_error_deg = np.degrees(np.arccos(dot_product))
         self._current_angle_error_deg = angle_error_deg
 
+        # 计算 correction 用于罗盘显示
+        curr_u = np.asarray(current_direction, dtype=float)
+        curr_u = curr_u / np.linalg.norm(curr_u)
+        targ_u = np.asarray(target_direction, dtype=float)
+        targ_u = targ_u / np.linalg.norm(targ_u)
+        correction = targ_u - curr_u * np.dot(targ_u, curr_u)
+
         thr = self._ALIGN_THRESHOLD_DEG
         if angle_error_deg < thr:
             self.alignment_hud.set_status("★ 对准，可进针")
@@ -1164,11 +1150,6 @@ class MainWindow(QMainWindow):
         else:
             self.alignment_hud.set_status("需调整姿态")
 
-        curr_u = np.asarray(current_direction, dtype=float)
-        curr_u = curr_u / np.linalg.norm(curr_u)
-        targ_u = np.asarray(target_direction, dtype=float)
-        targ_u = targ_u / np.linalg.norm(targ_u)
-        correction = targ_u - curr_u * np.dot(targ_u, curr_u)
         self.alignment_hud.set_guidance(correction, angle_error_deg)
 
         self._puncture_tick(angle_error_deg)

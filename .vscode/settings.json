@@ -1,4 +1,15 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+  "python.defaultInterpreterPath": "C:\\ProgramData\\miniconda3\\python.exe",
+  "python.terminal.executeInFileDir": false,
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "code-runner.runInTerminal": true,
+  "code-runner.clearPreviousOutput": false,
+  "code-runner.saveFileBeforeRun": true,
+  "code-runner.executorMap": {
+    "python": "python -u \"$fullFileName\""
+  },
+  "code-runner.terminalRoot": "workspaceRoot",
+  "code-runner.fileDirectoryAsCwd": false
 }

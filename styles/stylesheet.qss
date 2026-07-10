@@ -444,6 +444,37 @@ QLabel#HeaderStatusPill[role="muted"] {
     color: #9eb2c8;
 }
 
+/* ── StatusChip: 顶栏全局状态指示器 ── */
+QLabel#StatusChip {
+    padding: 5px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 60px;
+    text-align: center;
+    background: #0d131c;
+    border: 1px solid #2a3d56;
+    color: #5a6d82;
+}
+
+QLabel#StatusChip[chipState="done"] {
+    background: #152a22;
+    border-color: #3d8f62;
+    color: #6ee7a0;
+}
+
+QLabel#StatusChip[chipState="active"] {
+    background: #1a2f48;
+    border-color: #5ec8f0;
+    color: #5ec8f0;
+}
+
+QLabel#StatusChip[chipState="pending"] {
+    background: #0d131c;
+    border-color: #2a3d56;
+    color: #5a6d82;
+}
+
 QScrollArea {
     background: transparent;
     border: none;

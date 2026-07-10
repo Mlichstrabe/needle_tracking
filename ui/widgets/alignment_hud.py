@@ -19,8 +19,6 @@ class AlignmentHudPanel(QFrame):
         layout.addWidget(title)
 
         self.guidance_widget = GuidanceArrowWidget()
-        self.guidance_widget.setMinimumSize(104, 104)
-        self.guidance_widget.setMaximumSize(152, 152)
         layout.addWidget(self.guidance_widget, alignment=Qt.AlignHCenter)
 
         self.status_label = QLabel("连接设备并开始对准后显示偏差")

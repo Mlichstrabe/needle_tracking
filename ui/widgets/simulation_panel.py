@@ -36,7 +36,7 @@ class OrientationLockWidget(QWidget):
         self.is_locked = not self.is_locked
         if self.is_locked:
             self.lock_btn.setText("解除锁定")
-            set_button_variant(self.lock_btn, "danger")
+            set_button_variant(self.lock_btn, "secondary")
             self.status_label.setText("已锁定")
             set_label_role(self.status_label, "ok")
         else:
@@ -66,7 +66,7 @@ class SimulationPanel(QFrame):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        title = QLabel("③ 路径引导")
+        title = QLabel("⑤ 路径引导")
         title.setObjectName("SectionTitle")
         layout.addWidget(title)
 
@@ -83,7 +83,7 @@ class SimulationPanel(QFrame):
         self.is_simulation_active = not self.is_simulation_active
         if self.is_simulation_active:
             self.toggle_btn.setText("停止引导模式")
-            set_button_variant(self.toggle_btn, "danger")
+            set_button_variant(self.toggle_btn, "secondary")
             self.simulation_started.emit()
         else:
             self.toggle_btn.setText("启动引导模式")
