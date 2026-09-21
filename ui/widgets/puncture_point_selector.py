@@ -22,6 +22,7 @@ class PuncturePointSelector(QObject):
         self.vertices = None
         self.faces = None
         self._mesh = None
+        self._use_numpy_ray_cast = False
 
         # 找到真正的 GLViewWidget
         actual_gl_view = None
@@ -95,12 +96,23 @@ class PuncturePointSelector(QObject):
 
         ray_origin, ray_direction = self._screen_to_world_ray(ndc_x, ndc_y)
 
-        # BVH加速的射线-网格相交
-        locations, _, index_tri = self._mesh.ray.intersects_location(
-            ray_origins=[ray_origin],
-            ray_directions=[ray_direction],
-            multiple_hits=True
-        )
+        if self._use_numpy_ray_cast:
+            return self._perform_numpy_ray_cast(ray_origin, ray_direction)
+
+        # 优先使用 trimesh 的 BVH；没有可选 rtree 依赖时使用内置实现，
+        # 保证主程序仍可完成 Entry 选点。
+        try:
+            locations, _, index_tri = self._mesh.ray.intersects_location(
+                ray_origins=[ray_origin],
+                ray_directions=[ray_direction],
+                multiple_hits=True
+            )
+        except ModuleNotFoundError as exc:
+            if exc.name != "rtree":
+                raise
+            self._use_numpy_ray_cast = True
+            print("[Selector] rtree 未安装，切换为 NumPy 射线检测")
+            return self._perform_numpy_ray_cast(ray_origin, ray_direction)
 
         if len(locations) == 0:
             return None, None
@@ -109,6 +121,58 @@ class PuncturePointSelector(QObject):
         dists = np.linalg.norm(locations - ray_origin, axis=1)
         closest = np.argmin(dists)
         return self._point_and_normal(locations[closest], index_tri[closest], ray_origin)
+
+    def _perform_numpy_ray_cast(self, ray_origin, ray_direction):
+        """无 rtree 时的分块 Möller–Trumbore 射线检测。"""
+        best_t = np.inf
+        best_point = None
+        best_tri_idx = None
+        origin = np.asarray(ray_origin, dtype=np.float64)
+        direction = np.asarray(ray_direction, dtype=np.float64)
+        epsilon = 1e-8
+        chunk_size = 20000
+
+        for start in range(0, len(self.faces), chunk_size):
+            end = min(start + chunk_size, len(self.faces))
+            triangles = self.vertices[self.faces[start:end]]
+            v0 = triangles[:, 0].astype(np.float64, copy=False)
+            edge1 = triangles[:, 1] - v0
+            edge2 = triangles[:, 2] - v0
+
+            h = np.cross(direction, edge2)
+            a = np.einsum("ij,ij->i", edge1, h)
+            valid = np.abs(a) > epsilon
+            if not np.any(valid):
+                continue
+
+            inv_a = np.zeros_like(a)
+            inv_a[valid] = 1.0 / a[valid]
+            s = origin - v0
+            u = inv_a * np.einsum("ij,ij->i", s, h)
+            valid &= (u >= 0.0) & (u <= 1.0)
+            if not np.any(valid):
+                continue
+
+            q = np.cross(s, edge1)
+            v = inv_a * np.einsum("j,ij->i", direction, q)
+            valid &= (v >= 0.0) & ((u + v) <= 1.0)
+            if not np.any(valid):
+                continue
+
+            t = inv_a * np.einsum("ij,ij->i", edge2, q)
+            valid &= t > epsilon
+            valid &= t < best_t
+            if not np.any(valid):
+                continue
+
+            local_idx = int(np.flatnonzero(valid)[np.argmin(t[valid])])
+            best_t = float(t[local_idx])
+            best_point = origin + best_t * direction
+            best_tri_idx = start + local_idx
+
+        if best_point is None:
+            return None, None
+        return self._point_and_normal(best_point, best_tri_idx, origin)
 
     def _point_and_normal(self, point, tri_idx, ray_origin):
         """从交点+三角形索引计算法线"""

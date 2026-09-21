@@ -1,0 +1,20 @@
+{
+  "base_parameters": "laser100m_T2_parameters.json",
+  "revision": "T5-widened-inner-clearance-pla",
+  "housing": {
+    "width": 46.0
+  },
+  "pla_clip_design": {
+    "elastic_snap_hooks": false,
+    "rigid_locator_posts": true,
+    "adhesive_landings": true,
+    "inner_clearance_added_each_side_mm": 1.0,
+    "nominal_wall_mm": 1.6
+  },
+  "needle_profile": {
+    "root_body_diameter_mm": 5.0,
+    "root_reinforcement_max_diameter_mm": 8.5,
+    "ball_tip_diameter_mm": 4.4,
+    "exposed_length_mm": 200.0
+  }
+}

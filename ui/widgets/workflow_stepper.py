@@ -4,9 +4,9 @@ from PyQt5.QtCore import Qt
 
 
 class WorkflowStepBar(QWidget):
-    """四步：加载 CT → 选 Entry → 连接 IMU → 对准 Target。"""
+    """六步：CT → Entry → 设备 → 姿态对准 → 测距进针 → 完成。"""
 
-    STEPS = ("加载 CT", "选 Entry", "连接 IMU", "对准 Target")
+    STEPS = ("加载 CT", "选 Entry", "连接设备", "姿态对准", "测距进针", "完成")
 
     def __init__(self, parent=None):
         super().__init__(parent)

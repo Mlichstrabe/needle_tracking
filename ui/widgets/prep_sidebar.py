@@ -45,7 +45,7 @@ class PrepSection(QFrame):
         self._update_header_text(checked)
 
     def _update_header_text(self, expanded):
-        arrow = "▾" if expanded else "▴"
+        arrow = "▾" if expanded else "▸"
         self._header.setText(f"{self._base_title}  {arrow}")
 
     def set_expanded(self, expanded):
@@ -53,11 +53,12 @@ class PrepSection(QFrame):
 
 
 class PrepSidebar(QWidget):
-    """设备 / 影像 / 遥测 三块手风琴（CT 居中）。"""
+    """影像 / 设备 / 遥测 / 测距四块准备手风琴。"""
 
-    SEC_DEVICE = 0
-    SEC_CT = 1
+    SEC_CT = 0
+    SEC_DEVICE = 1
     SEC_IMU = 2
+    SEC_RANGE = 3
 
     def __init__(self, parent=None):
         super().__init__(parent)

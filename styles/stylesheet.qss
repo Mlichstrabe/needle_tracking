@@ -24,7 +24,7 @@ QFrame#AppHeader {
 
 QLabel#AppTitle {
     color: #e8f2fa;
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 700;
     letter-spacing: 0.3px;
 }
@@ -36,7 +36,7 @@ QLabel#AppSubtitle {
 
 QLabel#SectionTitle {
     color: #5ec8f0;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     padding: 0 0 4px 0;
 }
@@ -98,7 +98,7 @@ QLabel {
 
 QLabel[role="muted"] {
     color: #8a9aad;
-    font-size: 13px;
+    font-size: 12px;
 }
 
 QLabel[role="hint"] {
@@ -301,7 +301,7 @@ QFrame#PrepSectionBody {
 
 QLabel#LeftBlockTitle {
     color: #5ec8f0;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     padding: 8px 10px 6px 10px;
     background: #151d2a;
@@ -387,9 +387,95 @@ QFrame#HudPanel {
     border-radius: 10px;
 }
 
+QFrame#RangeDepthCard {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0 #10272a,
+        stop:1 #101d29
+    );
+    border: 1px solid #31766e;
+    border-radius: 10px;
+}
+
+QFrame#RangeDepthCard QPushButton {
+    min-height: 20px;
+    padding: 3px 8px;
+}
+
+QFrame#RangeDepthCard QComboBox {
+    min-height: 20px;
+    padding: 3px 8px;
+}
+
+QLabel#RangeDepthValue {
+    color: #72ead2;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 30px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    padding: 0;
+}
+
+QFrame#RangeMetricCard {
+    background: #0b1821;
+    border: 1px solid #203b43;
+    border-radius: 7px;
+}
+
+QLabel#RangeMetricValue {
+    color: #dcebf0;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 15px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+QLabel#RangeStateBadge {
+    padding: 4px 9px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #8397aa;
+    background: #15232d;
+    border: 1px solid #2d4654;
+}
+
+QLabel#RangeStateBadge[rangeState="active"] {
+    color: #7ed8f4;
+    background: #173244;
+    border-color: #356b86;
+}
+
+QLabel#RangeStateBadge[rangeState="done"] {
+    color: #78e7cf;
+    background: #16433a;
+    border-color: #2e806f;
+}
+
+QLabel#RangeStateBadge[rangeState="error"] {
+    color: #ff9b9b;
+    background: #42242a;
+    border-color: #8c4652;
+}
+
+QLabel#RangeStatus {
+    color: #b8c8d8;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 5px;
+    background: #13222d;
+    border-radius: 6px;
+}
+
+QLabel#RangeNote {
+    color: #7f93a6;
+    font-size: 11px;
+    line-height: 1.3;
+}
+
 QLabel#HudAngle {
     font-family: "Cascadia Mono", "Consolas", monospace;
-    font-size: 36px;
+    font-size: 32px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     color: #5ec8f0;
@@ -475,6 +561,12 @@ QLabel#StatusChip[chipState="pending"] {
     color: #5a6d82;
 }
 
+QLabel#StatusChip[chipState="error"] {
+    background: #3b2027;
+    border-color: #8b3d4b;
+    color: #ff8f9d;
+}
+
 QScrollArea {
     background: transparent;
     border: none;
@@ -517,6 +609,14 @@ QLabel#AlignmentStatus {
     border-radius: 6px;
     background: #1a2433;
     color: #b8c8d8;
+}
+
+QLabel#MetricValue {
+    color: #dcebf0;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
 }
 
 QLabel#AlignmentStatus[status="ok"] {

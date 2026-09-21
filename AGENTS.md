@@ -8,7 +8,7 @@
 
 - **类型**：PyQt5 桌面应用（非 Web）
 - **场景**：手术探针 / IMU 穿刺**训练**（角度对准），非临床导航
-- **版本定位**：**无配准** — 不做 CT↔患者刚性配准；连接 IMU 后**针尖固定在 Entry**，仅根据四元数更新针体姿态与 IMU 位置
+- **版本定位**：**无配准** — 不做 CT↔患者刚性配准；穿刺训练中针尖固定在 Entry（进针时由测距深度驱动），姿态观察中针尖固定在原点、IMU 端随姿态移动
 - **入口**：`main.py` → `ui.main_window.MainWindow`
 
 ### JetArm marker 实验线（支线，不接主窗口）
@@ -49,12 +49,13 @@ ui/
   widgets/
     gl_widget.py           # PyQtGraph OpenGL：针、CT、Entry/Target、路径虚线
     panels.py              # 左栏手风琴内容页；GuidanceArrowWidget（圆盘）
-    workflow_stepper.py    # 顶栏四步状态条
+  workflow_stepper.py    # 顶栏六步状态条
     alignment_hud.py       # 右栏对准 HUD（圆盘 + 大角度）
     prep_sidebar.py        # 左栏深色手风琴（替代 QToolBox）
     ui_helpers.py          # QSS variant/role；configure_side_scroll / apply_panel_chrome
-    simulation_panel.py    # 右栏路径引导 + 姿态锁定
-    puncture_point_selector.py  # 3D 点击选点（trimesh BVH）
+  simulation_panel.py    # 右栏路径引导 + 姿态锁定
+  puncture_point_selector.py  # 3D 点击选点（trimesh BVH）
+  range_depth_panel.py         # 100m 测距采集、滤波、零点与深度信号
 styles/stylesheet.qss      # 全局暗色主题（局部仍有内联 setStyleSheet）
 ```
 
@@ -66,10 +67,12 @@ styles/stylesheet.qss      # 全局暗色主题（局部仍有内联 setStyleShe
 
 ```text
 加载 DICOM (CTModelPanel)
-  → 开始选择穿刺点 (PuncturePointPanel) → 3D 点击 (PuncturePointSelector)
-  → 连接串口 (DeviceConnectionPanel)
-  → 针尖锚定 Entry (gl_widget.set_needle_tip_position)
-  → 计算 Entry→Target 方向 → alignment_timer + GuidanceArrowWidget + 穿刺面板角度
+  → 开始选择 Entry (PuncturePointPanel) → 3D 点击 (PuncturePointSelector)
+  → 自动使用默认 Target、计算规划深度
+  → 分别连接 IMU 与 100m 测距模块
+  → 针尖锚定 Entry、记录测距零点
+  → 姿态进入 3° 阈值 → 测距深度驱动进度与 Entry→Target 方向上的 3D 训练针尖
+  → 连续 3 个有效样本达到规划深度 → 完成
   → [可选] 右侧 SimulationPanel：引导模式 / 姿态锁定 → 3D 预设/目标路径虚线
 ```
 
@@ -89,16 +92,21 @@ flowchart LR
   T33[panel_update_timer 33ms] --> Panels[_update_panels]
   T100[alignment_timer 100ms] --> Align[_update_alignment]
   Align --> Guide[GuidanceArrowWidget]
-  Align --> PP[PuncturePointPanel 角度]
+  Align --> PC[PunctureDepthController]
+  RP[RangeDepthPanel：raw→中值→EMA→相对深度] --> PC
+  PC --> GL[Entry→Target方向上的3D应用深度]
+  PC --> PP[PuncturePointPanel状态与进度]
 ```
 
 | 数据 | 来源 | 用途 |
 |------|------|------|
 | `quaternion`, `euler` | 设备帧 0x59 / 0x53 | 显示、针向计算 |
 | `needle_direction` | `needle_axis_scene_normalized(q)` | 对准、3D 针体 |
-| `tip_pos` | 固定 Entry 或 `[0,0,0]` | 针尖显示 |
-| `imu_pos` | `imu_position_from_tip(tip, dir, needle_length)` | 针尾 / IMU 盒 |
+| `tip_pos` | 训练时为 Entry 或测距驱动位置；观察时固定 `[0,0,0]` | 红色针尖显示 |
+| `imu_pos` | 由 `imu_position_from_tip(tip, dir, needle_length)` 计算 | 绿色 IMU 盒 |
 | `target_direction_world` | Entry→Target 单位向量 | 对准误差 |
+| `filtered_distance_mm` | 100m 测距面板 | 零点差分、穿刺深度 |
+| `applied_depth_mm` | `PunctureDepthController` | 进度条与训练用 3D 针尖 |
 
 **针长**：`config/imu_geometry.json` 的 `needle_length_mm` → `MainWindow.needle_length` → `gl_widget.needle_length`（`_sync_needle_length_to_gl`）；位置计算与固定针尖分支均用 `self.needle_length` / `gl_widget.needle_length`。
 
@@ -108,9 +116,9 @@ flowchart LR
 
 | 区域 | 内容 |
 |------|------|
-| 左栏（可滚动） | CT 导入 → 设备连接（含校准）→ IMU（欧拉/四元数、重置视角/清轨迹） |
+| 左栏（可滚动手风琴） | CT 导入 → 设备连接（含校准）→ IMU（欧拉/四元数、重置视角/清轨迹）→ 实时穿刺深度（100m 测距，默认收起）；按当前流程自动展开一项 |
 | 中栏 | 全高 `GLVisualizationWidget` |
-| 右栏（可滚动） | 对准引导标题 + 罗盘 → 穿刺点面板 → 路径引导面板 |
+| 右栏 | 固定实时区：对准 HUD；下方独立滚动：穿刺点面板 + 路径引导面板 |
 
 窗口启动：`MainWindow._apply_window_geometry()` 按屏幕可用区域约 **88%** 缩放并居中。
 
@@ -125,6 +133,8 @@ flowchart LR
 - **CT**：`load_clicked` / `clear_clicked` / `visibility_changed`
 - **DICOM**：`progress_updated` / `loading_finished` / `loading_failed`
 - **穿刺点**：`start_selection_clicked` / `reselect_clicked`；`PuncturePointSelector.point_selected`
+- **测距面板**：`sensor_state_changed` / `range_sample` / `range_validity_changed` / `baseline_changed`
+- **穿刺状态机**：`core/puncture_depth_controller.py` 接收姿态、设备、零点和测距数据，输出状态、应用深度与完成事件
 - **模拟**：`simulation_started` / `simulation_stopped` / `orientation_locked`
 
 **不存在**：`puncture_session.*`、`path_selected`（除非重新实现）。
@@ -143,7 +153,7 @@ flowchart LR
 ## 9. 坐标与几何
 
 - 针体在 IMU 体系参考方向：`_NEEDLE_BODY_IMU ≈ (√2/2, √2/2, 0)`（见 `core/imu_kinematics.py`）
-- 映射到场景系：`needle_axis_scene_raw` 内对 x/y/z 做轴交换与取反 — **改硬件安装方式必须改此处**
+- 映射到场景系：`needle_axis_scene_raw` 依次应用可选竖直标定、Z 轴 240° 逆时针旋转、X 轴 180° 旋转和场景 Y 分量镜像；参数来自 `config/imu_geometry.json`
 - CT 加载后顶点会平移到近原点；Target 默认 `model center + [30, -25, 60]` mm
 
 ---
@@ -170,7 +180,7 @@ flowchart LR
 | 选穿刺点 | `puncture_point_selector.py`, `MainWindow._on_puncture_*` |
 | CT 加载性能/质量 | `core/dicom_loader.py` |
 | 新按钮/面板 | `panels.py` + `main_window` 布局与 `_connect_signals` |
-| Target 可交互选择 | `PuncturePointPanel` + `PuncturePointSelector.MODE_TARGET` + `main_window._on_*_target*` |
+| Target 默认点 | CT 加载后由 `MainWindow` 自动设置默认 Target；当前不开放用户自选 Target |
 
 ---
 
@@ -196,6 +206,8 @@ python main.py
 ---
 
 ## 14. 文档版本
+
+- 2026-09-16：`RangeDepthPanel` 移入左栏 `PrepSidebar` 第 4 个可折叠分区，默认收起；右栏仅保留对准 HUD 与可滚动的穿刺点/路径操作区，避免测距卡片遮挡 Entry 选点。新增 `PunctureDepthController`：取消固定 10 秒自动进针，采用 3°准入、4°暂停和测距深度驱动的穿刺状态机；与 IMU 互斥占用串口，关闭主窗口时停止采集。
 
 - 对齐 git：`master` 上 README + 无 `puncture_session` / 三视图 之后的结构
 - 若目录与本文冲突，以 **仓库实际文件** 为准，并应更新本文档

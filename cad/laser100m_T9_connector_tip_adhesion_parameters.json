@@ -1,0 +1,19 @@
+{
+  "revision": "T9-flat-connector-and-tip-adhesion",
+  "connector_print": {
+    "pin_diameter_mm": 3.0,
+    "pin_flat_bottom_offset_from_axis_mm": -0.6,
+    "pin_section": "3/4-like D section with a broad planar print face",
+    "hole_diameter_mm": 3.6,
+    "fit_note": "round clearance holes retained; glue fixes the finished joint"
+  },
+  "tip_print_adhesion": {
+    "enabled": true,
+    "tab_count": 3,
+    "tab_width_y_mm": 7.0,
+    "tab_height_z_mm": 0.8,
+    "tab_overlap_into_body_mm": 0.15,
+    "tab_x_ranges_mm": [[-197.0, -191.0], [-166.0, -159.0], [-130.0, -121.0]],
+    "removal": "snap or cut the three sacrificial feet away after printing and deburr the flat face"
+  }
+}

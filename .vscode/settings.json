@@ -11,5 +11,7 @@
     "python": "python -u \"$fullFileName\""
   },
   "code-runner.terminalRoot": "workspaceRoot",
-  "code-runner.fileDirectoryAsCwd": false
+  "code-runner.fileDirectoryAsCwd": false,
+  "python-envs.defaultEnvManager": "ms-python.python:conda",
+  "python-envs.defaultPackageManager": "ms-python.python:conda"
 }

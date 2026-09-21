@@ -37,10 +37,8 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     base_font = app.font()
-    if base_font.pointSize() > 0:
-        base_font.setPointSize(max(base_font.pointSize(), 10))
-    else:
-        base_font.setPointSizeF(max(base_font.pointSizeF(), 10.0))
+    # 与 QSS 统一使用像素字号，避免 Windows 高 DPI 下 pt / px 混用失衡。
+    base_font.setPixelSize(13)
     app.setFont(base_font)
 
     style_path = os.path.join(_ROOT, "styles", "stylesheet.qss")

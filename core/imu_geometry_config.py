@@ -17,6 +17,8 @@ def default_config() -> Dict[str, Any]:
         "needle_body_angle_deg": 121.0,
         "needle_body_bias_deg": 7.7,
         "scene_z_ccw_deg": 135.0,
+        "scene_x_deg": 0.0,
+        "scene_y_mirror": False,
         "needle_angle_clockwise_from_x": True,
         "needle_length_mm": 200.0,
         "display_offset": {
@@ -122,10 +124,14 @@ def apply_kinematics(cfg: Dict[str, Any]) -> None:
         set_needle_body_angle_deg,
         set_needle_body_bias_deg,
         set_scene_z_ccw_deg,
+        set_scene_x_deg,
+        set_scene_y_mirror,
     )
 
     set_needle_body_angle_deg(float(cfg.get("needle_body_angle_deg", 121.0)))
     set_needle_body_bias_deg(float(cfg.get("needle_body_bias_deg", 0.0)))
     set_scene_z_ccw_deg(float(cfg.get("scene_z_ccw_deg", 0.0)))
+    set_scene_x_deg(float(cfg.get("scene_x_deg", 0.0)))
+    set_scene_y_mirror(bool(cfg.get("scene_y_mirror", False)))
     set_needle_angle_clockwise_from_x(bool(cfg.get("needle_angle_clockwise_from_x", True)))
     apply_display_offset(cfg.get("display_offset"))

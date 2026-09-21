@@ -372,7 +372,7 @@ class DeviceConnectionPanel(QWidget):
         mode_layout.addWidget(self.mode_combo, 1)
         layout.addLayout(mode_layout)
 
-        self.observe_hint = QLabel("无需加载 CT，针尖固定在坐标原点")
+        self.observe_hint = QLabel("无需加载 CT；红色针尖固定在原点，绿色 IMU 随姿态移动")
         self.observe_hint.setWordWrap(True)
         set_label_role(self.observe_hint, "muted")
         self.observe_hint.setVisible(False)
@@ -708,14 +708,14 @@ class PuncturePointPanel(QFrame):
         self.target_pick_btn.setToolTip("使用默认 Target 并继续对准流程")
         set_button_variant(self.target_pick_btn, "primary")
         self.target_pick_btn.clicked.connect(self.use_default_target_clicked.emit)
-        self.target_pick_btn.setEnabled(False)
+        self.target_pick_btn.setVisible(False)
         target_btn_row.addWidget(self.target_pick_btn)
 
         self.target_default_btn = QPushButton("自选 Target（3D 点击）")
         self.target_default_btn.setToolTip("在 3D 头部表面手动点击选择 Target")
         set_button_variant(self.target_default_btn, "ghost")
         self.target_default_btn.clicked.connect(self.start_target_selection_clicked.emit)
-        self.target_default_btn.setEnabled(False)
+        self.target_default_btn.setVisible(False)
         target_btn_row.addWidget(self.target_default_btn)
         layout.addLayout(target_btn_row)
 
@@ -755,6 +755,7 @@ class PuncturePointPanel(QFrame):
     def _init_puncture_ui(self, layout):
         self._puncture_in_progress = False
         self._puncture_done = False
+        self._puncture_state = "PREPARING"
         self._puncture_current = 0.0
         self._puncture_plan = 0.0
 
@@ -763,15 +764,12 @@ class PuncturePointPanel(QFrame):
         sep.setObjectName("Separator")
         layout.addWidget(sep)
 
-        hdr = QLabel("④ 进针进度")
+        hdr = QLabel("③ 测距进针进度")
         hdr.setObjectName("SectionTitle")
         layout.addWidget(hdr)
 
         self.puncture_depth_label = QLabel("当前: 0.0 / -- mm")
         self.puncture_depth_label.setObjectName("MetricValue")
-        f = self.puncture_depth_label.font()
-        f.setPointSize(f.pointSize() + 2)
-        self.puncture_depth_label.setFont(f)
         layout.addWidget(self.puncture_depth_label)
 
         self.puncture_progress = QProgressBar()
@@ -795,14 +793,35 @@ class PuncturePointPanel(QFrame):
 
         self.puncture_status = QLabel("▶ 对准后可开始进针")
         set_label_role(self.puncture_status, "muted")
+        self.puncture_status.setWordWrap(True)
         layout.addWidget(self.puncture_status)
 
+    def set_puncture_state(self, state, reason=""):
+        """显示测距穿刺状态；状态判定由 PunctureDepthController 负责。"""
+        self._puncture_state = str(state)
+        self._puncture_in_progress = self._puncture_state == "PUNCTURING"
+        self._puncture_done = self._puncture_state == "COMPLETE"
+        if self._puncture_plan > 0:
+            self.puncture_reset_btn.setEnabled(True)
+        labels = {
+            "PREPARING": ("等待 CT、Entry 和规划路径", "muted"),
+            "WAITING_DEVICES": ("等待连接设备或记录测距零点", "muted"),
+            "ALIGNING": ("▶ 请将姿态对准 3° 内", "warn"),
+            "PUNCTURING": ("▶ 测距驱动进针中...", "ok"),
+            "ANGLE_PAUSED": ("Ⅱ 姿态偏离，深度应用暂停", "warn"),
+            "RANGE_INVALID": ("⚠ 测距无效，深度应用暂停", "danger"),
+            "COMPLETE": ("★ 到达 Target！", "ok"),
+        }
+        message, role = labels.get(self._puncture_state, (str(state), "muted"))
+        if reason and self._puncture_state in {"WAITING_DEVICES", "RANGE_INVALID"}:
+            message = f"{message}：{reason}"
+        self.puncture_status.setText(message)
+        set_label_role(self.puncture_status, role)
+
     def enable_puncture_mode(self, plan_mm: float):
-        self._puncture_in_progress = True
-        self._puncture_done = False
         self._puncture_plan = plan_mm
-        self.puncture_reset_btn.setEnabled(True)
-        self.update_puncture_depth(0.0, plan_mm)
+        self.set_puncture_state("PUNCTURING")
+        self.update_puncture_depth(self._puncture_current, plan_mm)
 
     def update_puncture_depth(self, current_mm: float, plan_mm: float):
         self._puncture_current = current_mm
@@ -813,24 +832,16 @@ class PuncturePointPanel(QFrame):
         self.puncture_depth_label.setText(f"当前: {current_mm:.1f} / {plan_mm:.1f} mm")
         self.puncture_progress.setValue(int(pct))
         self.puncture_remaining.setText(f"剩余: {max(plan_mm - current_mm, 0.0):.1f} mm")
-        if self._puncture_done:
-            self.puncture_status.setText("★ 到达 Target！")
-            set_label_role(self.puncture_status, "ok")
-        elif self._puncture_in_progress:
-            self.puncture_status.setText("▶ 进针中...")
-            set_label_role(self.puncture_status, "ok")
-        else:
-            self.puncture_status.setText("▶ 对准后可开始进针")
-            set_label_role(self.puncture_status, "muted")
+        self.set_puncture_state(self._puncture_state)
 
     def set_puncture_done(self):
-        self._puncture_done = True
-        self._puncture_in_progress = False
+        self.set_puncture_state("COMPLETE")
         self.update_puncture_depth(self._puncture_current, self._puncture_plan)
 
     def reset_puncture_ui(self):
         self._puncture_in_progress = False
         self._puncture_done = False
+        self._puncture_state = "PREPARING"
         self._puncture_current = 0.0
         self._puncture_plan = 0.0
         self.puncture_progress.setValue(0)
@@ -907,12 +918,12 @@ class PuncturePointPanel(QFrame):
         self.reselect_btn.setVisible(True)
 
         if not getattr(self, "_observe_mode", False):
-            self.target_pick_btn.setEnabled(True)
-            self.target_default_btn.setEnabled(True)
+            self.target_pick_btn.setVisible(False)
+            self.target_default_btn.setVisible(False)
             _apply_hint_state(
                 self.target_hint_label,
-                "已自动设置默认 Target，点击「续接」确认",
-                "warn",
+                "已自动设置默认 Target",
+                "success",
             )
 
     def set_target_selecting_mode(self, selecting: bool):
@@ -921,14 +932,11 @@ class PuncturePointPanel(QFrame):
         if selecting:
             _apply_hint_state(
                 self.target_hint_label,
-                "请在 3D 视图中点击头部表面，选择 Target 点",
-                "warn",
+                "Target 已固定为默认点，不支持手动选择",
+                "default",
             )
-            self.target_pick_btn.setEnabled(False)
-            self.target_default_btn.setEnabled(False)
-        elif self.coord_widget.isVisible():
-            self.target_pick_btn.setEnabled(True)
-            self.target_default_btn.setEnabled(True)
+        self.target_pick_btn.setVisible(False)
+        self.target_default_btn.setVisible(False)
 
     def set_target_point(self, point, entry_point=None, from_default: bool = False):
         p = np.asarray(point, dtype=float).reshape(3)
@@ -944,7 +952,7 @@ class PuncturePointPanel(QFrame):
         src = "默认 Target" if from_default else "Target 已选择"
         _apply_hint_state(self.target_hint_label, src, "success")
         self.target_coord_widget.setVisible(True)
-        self.target_reselect_btn.setVisible(True)
+        self.target_reselect_btn.setVisible(False)
         self.target_pick_btn.setVisible(False)
         self.target_default_btn.setVisible(False)
 
@@ -954,20 +962,18 @@ class PuncturePointPanel(QFrame):
         self.target_depth_label.setText("Entry→Target: -- mm")
         self.target_coord_widget.setVisible(False)
         self.target_reselect_btn.setVisible(False)
-        self.target_pick_btn.setVisible(True)
-        self.target_default_btn.setVisible(True)
-        self.target_pick_btn.setEnabled(self.coord_widget.isVisible())
-        self.target_default_btn.setEnabled(self.coord_widget.isVisible())
+        self.target_pick_btn.setVisible(False)
+        self.target_default_btn.setVisible(False)
         if self.coord_widget.isVisible():
             _apply_hint_state(
                 self.target_hint_label,
-                "点击「续接」确认默认 Target，或「自选 Target」手动指定",
+                "Target 将固定使用 CT 加载后的默认点",
                 "default",
             )
         else:
             _apply_hint_state(
                 self.target_hint_label,
-                "Entry 选定后将自动使用默认 Target，点击续接即可",
+                "Entry 选定后将自动使用默认 Target",
                 "default",
             )
 
@@ -1040,7 +1046,8 @@ class GuidanceArrowWidget(QWidget):
 
         if not self._visible:
             painter.setPen(QColor(95, 111, 130))
-            fnt = QFont("Consolas", 9)
+            fnt = QFont("Consolas")
+            fnt.setPixelSize(11)
             painter.setFont(fnt)
             painter.drawText(QRect(int(cx_f - 30), int(cy_f + radius - 20),
                                    60, 20), Qt.AlignCenter, "--")
@@ -1109,11 +1116,12 @@ class GuidanceArrowWidget(QWidget):
         painter.drawEllipse(QPointF(px, py), 9, 9)
 
         painter.setPen(color)
-        fnt = QFont("Consolas", 10, QFont.Bold)
+        fnt = QFont("Consolas")
+        fnt.setPixelSize(12)
+        fnt.setBold(True)
         painter.setFont(fnt)
         painter.drawText(
             QRect(int(cx_f - 44), int(cy_f + radius - 22), 88, 18),
             Qt.AlignCenter,
             f"{self._angle_deg:.1f}°",
         )
-

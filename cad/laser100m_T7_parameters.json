@@ -1,0 +1,27 @@
+{
+  "revision": "T7-flat-bottom-three-quarter-needle-pla",
+  "housing": {
+    "width": 46.0
+  },
+  "pla_clip_design": {
+    "elastic_snap_hooks": false,
+    "rigid_locator_posts": true,
+    "adhesive_landings": true,
+    "inner_clearance_added_each_side_mm": 1.0,
+    "nominal_wall_mm": 1.6
+  },
+  "needle_profile": {
+    "body_diameter_mm": 5.0,
+    "ball_diameter_mm": 4.4,
+    "root_reinforcement_max_diameter_mm": 8.5,
+    "exposed_length_mm": 200.0,
+    "joint_x_mm": [-60.0, -115.0],
+    "joint_depth_mm": 8.0,
+    "alignment_pin_diameter_mm": 3.0,
+    "alignment_hole_diameter_mm": 3.6,
+    "joint_clearance_diameter_mm": 0.6,
+    "flat_bottom_z_offset_mm": -1.0,
+    "flat_bottom_definition": "one common longitudinal plane at axis_z + offset; approximately three-quarter circular cross-section for the nominal 5 mm shaft",
+    "print_strategy": "three_horizontal_flat_bottom_segments_glued_with_alignment_pins"
+  }
+}

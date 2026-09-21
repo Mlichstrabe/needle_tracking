@@ -3,10 +3,10 @@
 几何链路::
 
     d_raw     = R(q) @ v_needle_body
-    d_display = R_offset @ d_raw          # 竖直标定一次后持久化
+    d_scene   = M_y @ R_x @ R_z @ R_offset @ d_raw
 
-- ``v_needle_body``：针轴在 IMU 体坐标 XY 平面，从 +X **顺时针** 121°
-- 场景约定：Z 向上，针尖向下 = ``(0, 0, -1)``，针尖固定原点
+- ``v_needle_body``：针轴在 IMU 体坐标 XY 平面，从 +X 按配置角度旋转
+- 场景约定：Z 向上，针尖向下 = ``(0, 0, -1)``
 
 状态管理：所有运行时配置集中在 ``_State`` 实例中。
 模块级函数为向后兼容的快捷方式，委托至模块级单例 ``_state``。
@@ -40,6 +40,8 @@ class _State:
         self.display_offset_enabled: bool = False
 
         self.scene_z_ccw_deg: float = 0.0
+        self.scene_x_deg: float = 0.0
+        self.scene_y_mirror: bool = False
 
         self._refresh_needle_body_vector()
 
@@ -55,6 +57,14 @@ class _State:
         c, s = math.cos(a), math.sin(a)
         return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=float)
 
+    def scene_x_rotation_matrix(self) -> np.ndarray:
+        a = math.radians(self.scene_x_deg)
+        c, s = math.cos(a), math.sin(a)
+        return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]], dtype=float)
+
+    def scene_y_mirror_matrix(self) -> np.ndarray:
+        return np.diag([1.0, -1.0 if self.scene_y_mirror else 1.0, 1.0])
+
     def display_offset_dict(self) -> dict:
         return {
             "enabled": self.display_offset_enabled,
@@ -67,6 +77,8 @@ class _State:
             "needle_body_angle_deg": self.needle_body_angle_deg,
             "needle_body_bias_deg": self.needle_body_bias_deg,
             "scene_z_ccw_deg": self.scene_z_ccw_deg,
+            "scene_x_deg": self.scene_x_deg,
+            "scene_y_mirror": self.scene_y_mirror,
             "needle_angle_clockwise_from_x": self.needle_angle_clockwise_from_x,
             "display_offset": self.display_offset_dict(),
         }
@@ -128,6 +140,22 @@ def set_scene_z_ccw_deg(deg: float) -> None:
 
 def scene_z_ccw_deg() -> float:
     return _state.scene_z_ccw_deg
+
+
+def set_scene_x_deg(deg: float) -> None:
+    _state.scene_x_deg = float(deg)
+
+
+def scene_x_deg() -> float:
+    return _state.scene_x_deg
+
+
+def set_scene_y_mirror(enabled: bool) -> None:
+    _state.scene_y_mirror = bool(enabled)
+
+
+def scene_y_mirror() -> bool:
+    return _state.scene_y_mirror
 
 
 def scene_z_rotation_matrix() -> np.ndarray:
@@ -227,7 +255,13 @@ def needle_direction_raw(quaternion: Sequence[float]) -> np.ndarray:
 def capture_vertical_display_offset(quaternion: Sequence[float]) -> np.ndarray:
     """针体竖直持握时标定：将当前 d_raw 映射到场景 (0,0,-1)。"""
     d_raw = _unit(needle_direction_raw(quaternion))
-    _state.display_offset = _rotation_matrix_from_to(d_raw, SCENE_DOWN)
+    scene_rotation = (
+        _state.scene_y_mirror_matrix()
+        @ _state.scene_x_rotation_matrix()
+        @ _state.scene_z_rotation_matrix()
+    )
+    target_before_scene_rotation = scene_rotation.T @ np.asarray(SCENE_DOWN, dtype=float)
+    _state.display_offset = _rotation_matrix_from_to(d_raw, target_before_scene_rotation)
     _state.display_offset_enabled = True
     return _state.display_offset.copy()
 
@@ -237,6 +271,8 @@ def needle_axis_scene_raw(quaternion: Sequence[float]) -> Tuple[float, float, fl
     if _state.display_offset_enabled:
         d = _state.display_offset @ d
     d = _state.scene_z_rotation_matrix() @ d
+    d = _state.scene_x_rotation_matrix() @ d
+    d = _state.scene_y_mirror_matrix() @ d
     return float(d[0]), float(d[1]), float(d[2])
 
 

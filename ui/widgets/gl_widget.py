@@ -183,7 +183,7 @@ class GLVisualizationWidget(QFrame):
         self._sync_grid_axes_transform((0.0, 0.0, 0.0))
 
     def apply_scene_orientation(self):
-        """scene_z_ccw_deg 只作用于 IMU 针向（kinematics），不旋转 3D 网格/坐标轴。"""
+        """场景 X/Z 旋转只作用于 IMU 针向，不旋转 3D 网格/坐标轴。"""
         pass
 
     def _init_objects(self):

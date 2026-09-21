@@ -24,6 +24,7 @@ from PyQt5.QtWidgets import (
 from core.device_manager import DeviceManager
 from core.dicom_loader import DicomModelLoader
 from core.imu_geometry_config import apply_kinematics, load_config, save_config
+from core.puncture_depth_controller import PunctureDepthController
 from core.imu_kinematics import (
     imu_position_from_tip,
     needle_axis_for_position,
@@ -31,6 +32,8 @@ from core.imu_kinematics import (
     needle_body_angle_deg,
     needle_body_bias_deg,
     scene_z_ccw_deg,
+    scene_x_deg,
+    scene_y_mirror,
     needle_tilt_from_scene_down_deg,
     capture_vertical_display_offset,
     clear_display_offset,
@@ -40,6 +43,7 @@ from core.imu_kinematics import (
     tip_position_from_fixed,
 )
 from ui.widgets.gl_widget import GLVisualizationWidget
+from ui.widgets.range_depth_panel import RangeDepthPanel
 from ui.widgets.panels import (
     CTModelPanel,
     DeviceConnectionPanel,
@@ -50,7 +54,8 @@ from ui.widgets.puncture_point_selector import PuncturePointSelector
 from ui.widgets.simulation_panel import SimulationPanel
 from ui.widgets.workflow_stepper import WorkflowStepBar
 from ui.widgets.alignment_hud import AlignmentHudPanel
-from ui.widgets.ui_helpers import configure_side_scroll, set_label_role, apply_panel_chrome
+from ui.widgets.prep_sidebar import PrepSidebar
+from ui.widgets.ui_helpers import configure_side_scroll
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +95,8 @@ class MainWindow(QMainWindow):
         # 几何参数需在 UI 创建前可用
         # 你当前实测：IMU 中心到针尖约 20cm
         self.needle_length = 200.0
+        self._range_state = "pending"
+        self._range_state_text = "未连接"
 
         self._init_core_components()
         self._init_ui()
@@ -139,6 +146,7 @@ class MainWindow(QMainWindow):
         self._puncture_finished = False
         # 进针期间用 override tip 接管针尖位置（避免每帧 IMU 数据退回原点）
         self._puncture_override_tip = None
+        self.puncture_controller = PunctureDepthController()
 
         self._refresh_workflow_steps()
         self._apply_operation_mode_ui()
@@ -208,7 +216,13 @@ class MainWindow(QMainWindow):
 
         # 4 个全局状态 Chips
         self.header_chips = {}
-        for key, label in [("ct", "CT"), ("entry", "Entry"), ("target", "Target"), ("imu", "IMU")]:
+        for key, label in [
+            ("ct", "CT"),
+            ("entry", "Entry"),
+            ("target", "Target"),
+            ("imu", "IMU"),
+            ("range", "测距"),
+        ]:
             chip = QLabel(f"{label} ?")
             chip.setObjectName("StatusChip")
             chip.setProperty("chipState", "pending")
@@ -234,36 +248,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.gl_widget)
         return panel
 
-    def _make_left_block(self, title: str, body: QWidget) -> QFrame:
-        """左栏分区：标题 + 内容。"""
-        block = QFrame()
-        block.setObjectName("PrepSection")
-        apply_panel_chrome(block)
-        block_layout = QVBoxLayout(block)
-        block_layout.setContentsMargins(0, 0, 0, 0)
-        block_layout.setSpacing(0)
-
-        hdr = QLabel(title)
-        hdr.setObjectName("LeftBlockTitle")
-        block_layout.addWidget(hdr)
-
-        body_wrap = QFrame()
-        body_wrap.setObjectName("PrepSectionBody")
-        apply_panel_chrome(body_wrap, "#0e141e")
-        body_layout = QVBoxLayout(body_wrap)
-        body_layout.setContentsMargins(8, 6, 8, 8)
-        body_layout.setSpacing(4)
-
-        body.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
-        body_layout.addWidget(body)
-
-        block_layout.addWidget(body_wrap)
-        return block
-
     def _create_left_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(320)
+        panel.setMinimumWidth(290)
 
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(8, 8, 8, 8)
@@ -276,6 +264,9 @@ class MainWindow(QMainWindow):
         self.connection_panel = DeviceConnectionPanel()
         self.ct_panel = CTModelPanel()
         self.imu_panel = IMUDataPanel()
+        self.range_depth_panel = RangeDepthPanel(
+            lambda: self.device_manager.port if self.device_manager.is_connected else None
+        )
 
         scroll = QScrollArea()
         scroll_content = QWidget()
@@ -283,15 +274,13 @@ class MainWindow(QMainWindow):
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(8)
 
-        scroll_layout.addWidget(
-            self._make_left_block("设备 · 串口", self.connection_panel)
-        )
-        scroll_layout.addWidget(
-            self._make_left_block("影像 · DICOM", self.ct_panel)
-        )
-        scroll_layout.addWidget(
-            self._make_left_block("遥测 · IMU", self.imu_panel)
-        )
+        self.prep_sidebar = PrepSidebar()
+        self.prep_sidebar.add_section("1  影像 · DICOM", self.ct_panel, expanded=True)
+        self.prep_sidebar.add_section("2  设备 · IMU 串口", self.connection_panel)
+        self.prep_sidebar.add_section("3  遥测 · IMU", self.imu_panel)
+        self.prep_sidebar.add_section("4  实时穿刺深度 · 100m 测距", self.range_depth_panel)
+        scroll_layout.addWidget(self.prep_sidebar)
+        scroll_layout.addStretch()
 
         configure_side_scroll(scroll, scroll_content)
 
@@ -301,16 +290,24 @@ class MainWindow(QMainWindow):
     def _create_right_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(260)
+        panel.setMinimumWidth(340)
+
+        outer_layout = QVBoxLayout(panel)
+        outer_layout.setContentsMargins(8, 8, 8, 8)
+        outer_layout.setSpacing(7)
+
+        live_title = QLabel("实时引导")
+        live_title.setObjectName("SectionTitle")
+        outer_layout.addWidget(live_title)
+
+        self.alignment_hud = AlignmentHudPanel()
+        outer_layout.addWidget(self.alignment_hud)
 
         scroll = QScrollArea()
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(6)
-        layout.setContentsMargins(8, 8, 8, 8)
-
-        self.alignment_hud = AlignmentHudPanel()
-        layout.addWidget(self.alignment_hud)
+        layout.setSpacing(7)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         self.puncture_panel = PuncturePointPanel()
         layout.addWidget(self.puncture_panel)
@@ -319,15 +316,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sim_panel)
 
         configure_side_scroll(scroll, content)
-
-        outer_layout = QVBoxLayout(panel)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.addWidget(scroll)
+        outer_layout.addWidget(scroll, 1)
         return panel
 
     def _refresh_workflow_steps(self):
         if self._is_observe_mode():
-            states = ["pending", "pending", "pending", "pending"]
+            states = ["pending"] * 6
             if not self.device_manager.is_connected:
                 states[2] = "active"
             else:
@@ -335,33 +329,66 @@ class MainWindow(QMainWindow):
                 states[3] = "active"
             self.workflow_bar.set_states(states)
             self._update_header_status()
+            self._sync_prep_sidebar()
             return
 
-        states = ["pending", "pending", "pending", "pending"]
+        states = ["pending"] * 6
         if not self._ct_model_loaded:
             states[0] = "active"
         else:
             states[0] = "done"
             if self.puncture_point is None or self.target_point is None:
                 states[1] = "active"
-            elif not self.device_manager.is_connected:
-                states[1] = "done"
-                states[2] = "active"
             else:
                 states[1] = "done"
-                states[2] = "done"
-                states[3] = "active"
+                devices_ready = (
+                    self.device_manager.is_connected
+                    and self._range_state == "done"
+                )
+                if not devices_ready:
+                    states[2] = "active"
+                else:
+                    states[2] = "done"
+                    puncture_state = self.puncture_controller.state
+                    if puncture_state == PunctureDepthController.COMPLETE:
+                        states[3] = "done"
+                        states[4] = "done"
+                        states[5] = "done"
+                    elif puncture_state in (
+                        PunctureDepthController.PUNCTURING,
+                        PunctureDepthController.ANGLE_PAUSED,
+                    ):
+                        states[3] = "done"
+                        states[4] = "active"
+                    else:
+                        states[3] = "active"
         self.workflow_bar.set_states(states)
         self._update_header_status()
+        self._sync_prep_sidebar()
+
+    def _sync_prep_sidebar(self):
+        if not hasattr(self, "prep_sidebar"):
+            return
+        if self._is_observe_mode():
+            index = PrepSidebar.SEC_DEVICE if not self.device_manager.is_connected else PrepSidebar.SEC_IMU
+        elif not self._ct_model_loaded or self.puncture_point is None or self.target_point is None:
+            index = PrepSidebar.SEC_CT
+        elif not self.device_manager.is_connected:
+            index = PrepSidebar.SEC_DEVICE
+        elif self._range_state != "done" or self.puncture_controller.state == PunctureDepthController.WAITING_DEVICES:
+            index = PrepSidebar.SEC_RANGE
+        else:
+            index = PrepSidebar.SEC_IMU
+        self.prep_sidebar.set_active_section(index)
 
     def _update_header_status(self):
         def _set_chip(key, state, text=None):
             chip = self.header_chips.get(key)
             if chip is None:
                 return
-            labels = {"ct": "CT", "entry": "Entry", "target": "Target", "imu": "IMU"}
+            labels = {"ct": "CT", "entry": "Entry", "target": "Target", "imu": "IMU", "range": "测距"}
             label = labels.get(key, key)
-            display = text or f"{label} ✓" if state == "done" else f"{label} ?"
+            display = text if text is not None else (f"{label} ✓" if state == "done" else f"{label} ?")
             chip.setText(display)
             chip.setProperty("chipState", state)
             chip.style().unpolish(chip)
@@ -377,6 +404,14 @@ class MainWindow(QMainWindow):
             _set_chip("imu", "done", text)
         else:
             _set_chip("imu", "pending")
+
+        range_text = {
+            "pending": "测距 ?",
+            "active": "测距连接中",
+            "done": "测距 ✓",
+            "error": "测距异常",
+        }.get(self._range_state, "测距 ?")
+        _set_chip("range", self._range_state, range_text)
 
     def _apply_window_geometry(self):
         """按当前屏幕可用区域设置窗口大小，避免超出显示器导致面板被裁切。"""
@@ -396,15 +431,15 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(min_w, min_h)
 
         target_w = int(min(max_w, max(min_w, avail.width() * 0.88)))
-        target_h = int(min(max_h, max(min_h, avail.height() * 0.78)))
+        target_h = int(min(max_h, max(min_h, avail.height() * 0.90)))
         self.resize(target_w, target_h)
 
         frame = self.frameGeometry()
         frame.moveCenter(avail.center())
         self.move(frame.topLeft())
 
-        left_w = int(max(320, target_w * 0.28))
-        right_w = int(max(260, target_w * 0.24))
+        left_w = int(max(290, target_w * 0.22))
+        right_w = int(max(340, target_w * 0.26))
         center_w = max(420, target_w - left_w - right_w)
         self._splitter.setSizes([left_w, center_w, right_w])
 
@@ -456,6 +491,92 @@ class MainWindow(QMainWindow):
             self._on_use_default_target
         )
         self.puncture_panel.puncture_reset_clicked.connect(self._on_puncture_reset)
+        self.range_depth_panel.sensor_state_changed.connect(
+            self._on_range_sensor_state_changed
+        )
+        self.range_depth_panel.range_sample.connect(self._on_range_sample)
+        self.range_depth_panel.range_validity_changed.connect(
+            self._on_range_validity_changed
+        )
+        self.range_depth_panel.baseline_changed.connect(
+            self._on_range_baseline_changed
+        )
+
+    def _on_range_sensor_state_changed(self, state, text):
+        self._range_state = state
+        self._range_state_text = text
+        if state == "done":
+            events = self.puncture_controller.set_range_status(
+                connected=True, valid=False, reason="等待有效测距读数"
+            )
+        elif state == "error":
+            events = self.puncture_controller.set_range_status(
+                connected=False, valid=False, reason=text, error=True
+            )
+        else:
+            events = self.puncture_controller.set_range_status(
+                connected=False, valid=False, reason=text
+            )
+        self._consume_puncture_events(events)
+        self._update_header_status()
+        self._refresh_workflow_steps()
+
+    def _on_range_validity_changed(self, valid, reason):
+        events = self.puncture_controller.set_range_status(
+            connected=self._range_state == "done",
+            valid=bool(valid),
+            reason=reason or "测距数据无效",
+            error=not bool(valid),
+        )
+        self._consume_puncture_events(events)
+        self._refresh_workflow_steps()
+
+    def _on_range_baseline_changed(self, valid, baseline_mm):
+        events = self.puncture_controller.set_baseline(valid, baseline_mm)
+        self._consume_puncture_events(events)
+        self._refresh_workflow_steps()
+
+    def _on_range_sample(self, raw_mm, filtered_mm, measured_depth_mm, age_s):
+        if measured_depth_mm is None:
+            self._refresh_workflow_steps()
+            return
+        events = self.puncture_controller.update_range(
+            raw_mm,
+            filtered_mm,
+            measured_depth_mm,
+            age_s=age_s,
+            valid=True,
+        )
+        self._consume_puncture_events(events)
+
+    def _consume_puncture_events(self, events):
+        for event in events or []:
+            event_type = event.get("type")
+            if event_type == "state_changed":
+                state = event["state"]
+                reason = event.get("reason", "")
+                self.puncture_panel.set_puncture_state(state, reason)
+                if state == PunctureDepthController.PUNCTURING:
+                    self.gl_widget.clear_fixed_tip()
+                self._refresh_workflow_steps()
+                logger.info("穿刺状态: %s (%s)", state, reason)
+            elif event_type == "depth_applied":
+                applied = float(event["applied_depth_mm"])
+                plan = float(event["plan_depth_mm"])
+                self._puncture_current_depth = applied
+                self.puncture_panel.update_puncture_depth(applied, plan)
+                if self.puncture_controller.state == PunctureDepthController.PUNCTURING:
+                    self._apply_tip_at_depth(applied)
+            elif event_type == "completed":
+                self._puncture_finished = True
+                final_depth = float(event["final_depth_mm"])
+                self._puncture_current_depth = final_depth
+                self.puncture_panel.set_puncture_done()
+                logger.info(
+                    "穿刺完成 — 规划深度 %.1f mm，应用深度 %.1f mm",
+                    self._puncture_plan_depth,
+                    final_depth,
+                )
 
     def _init_timers(self):
         self.panel_update_timer = QTimer()
@@ -479,6 +600,10 @@ class MainWindow(QMainWindow):
         print(f"[Main] 工作模式已切换: {label}")
 
     def _on_serial_connect(self, port, baudrate, mode):
+        rp = self.range_depth_panel
+        if rp.worker and rp.worker.is_alive() and port == rp.ports.currentData():
+            QMessageBox.warning(self, '串口已占用', '该串口正在用于 100m 测距，请为 IMU 选择另一个串口。')
+            return
         self._operation_mode = mode or DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
         if self._operation_mode == DeviceConnectionPanel.MODE_PUNCTURE_TRAINING:
             if self.puncture_point is None:
@@ -512,6 +637,8 @@ class MainWindow(QMainWindow):
         self.imu_panel.set_status(connected, self._display_fps if connected else 0)
         if not connected:
             self._display_fps = 0
+        events = self.puncture_controller.set_imu_connected(connected)
+        self._consume_puncture_events(events)
         self._apply_operation_mode_ui()
         self._update_header_status()
         self._refresh_workflow_steps()
@@ -519,6 +646,8 @@ class MainWindow(QMainWindow):
 
     def _on_device_error(self, error_msg):
         print(f"✗ 设备错误: {error_msg}")
+        events = self.puncture_controller.set_imu_connected(False)
+        self._consume_puncture_events(events)
 
     def _on_device_data(self, data):
         try:
@@ -531,10 +660,10 @@ class MainWindow(QMainWindow):
             self._current_quaternion = list(quaternion)
             self._current_euler = list(euler)
 
+            self._update_needle_direction_fast(quaternion)
             imu_pos, tip_pos = self._calculate_positions_fast(quaternion)
             self._cached_imu_pos = imu_pos
             self._cached_tip_pos = tip_pos
-            self._update_needle_direction_fast(quaternion)
             self.gl_widget.update_data(imu_pos, tip_pos)
 
             self._data_frame_count += 1
@@ -549,6 +678,12 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
 
     def _calculate_positions_fast(self, quaternion):
+        if self._is_observe_mode():
+            direction = np.asarray(self._needle_direction, dtype=float).reshape(3)
+            tip_pos = np.zeros(3, dtype=float)
+            imu_pos = imu_position_from_tip(tip_pos, direction, float(self.needle_length))
+            return np.asarray(imu_pos, dtype=float), tip_pos
+
         direction = needle_axis_for_position(quaternion)
 
         # 进针 override 优先：避免 clear_fixed_tip 后针尖漂移到原点
@@ -631,6 +766,8 @@ class MainWindow(QMainWindow):
         cfg["needle_body_angle_deg"] = needle_body_angle_deg()
         cfg["needle_body_bias_deg"] = needle_body_bias_deg()
         cfg["scene_z_ccw_deg"] = scene_z_ccw_deg()
+        cfg["scene_x_deg"] = scene_x_deg()
+        cfg["scene_y_mirror"] = scene_y_mirror()
         cfg["needle_length_mm"] = float(self.needle_length)
         cfg["display_offset"] = display_offset_dict()
         cfg["smoothing"] = self.imu_panel.smoothing_dict()
@@ -776,6 +913,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._closing = True
+        self.range_depth_panel.shutdown()
         self._stop_alignment_monitoring()
         self.panel_update_timer.stop()
         self.device_manager.disconnect()
@@ -873,6 +1011,15 @@ class MainWindow(QMainWindow):
         self._default_target_point = None
         self._ct_model_center = None
         self._selecting_target = False
+        self._puncture_plan_depth = 0.0
+        self._puncture_current_depth = 0.0
+        self._puncture_finished = False
+        self._puncture_override_tip = None
+        self._stop_alignment_monitoring()
+        self._consume_puncture_events(
+            self.puncture_controller.reset(clear_baseline=True)
+        )
+        self.range_depth_panel.clear_baseline()
         self.puncture_panel.clear()
         self.puncture_panel.clear_target_display()
         self._apply_operation_mode_ui()
@@ -941,19 +1088,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_start_target_selection(self):
-        if self._is_observe_mode():
-            return
-        if self.puncture_point is None:
-            logger.warning("Target 选择：Entry 未设置，跳过")
-            return
-        if not self.puncture_selector:
-            return
-        print("[Main] 开始选择 Target")
-        self._selecting_target = True
-        self.puncture_selector.set_selection_mode(PuncturePointSelector.MODE_TARGET)
-        self.puncture_selector.setEnabled(True)
-        self.puncture_panel.set_target_selecting_mode(True)
-        self.puncture_panel.set_selecting_mode(False)
+        logger.info("Target 使用 CT 加载后的默认点，跳过手动选择")
 
     def _on_reselect_target(self):
         print("[Main] 重新选择 Target")
@@ -1045,6 +1180,11 @@ class MainWindow(QMainWindow):
         self._puncture_override_tip = None
         self._puncture_current_depth = 0.0
         self._puncture_in_progress = False
+        self._puncture_finished = False
+        self._consume_puncture_events(
+            self.puncture_controller.reset(clear_baseline=True)
+        )
+        self.range_depth_panel.clear_baseline()
         self.gl_widget.clear_entry_markers()
         self.gl_widget.set_entry_target_line(None, None)
         self.puncture_panel.clear()
@@ -1068,7 +1208,10 @@ class MainWindow(QMainWindow):
         if self._is_observe_mode():
             self.gl_widget._camera_adjusted = False
             self.gl_widget.set_needle_tip_position([0.0, 0.0, 0.0])
-            logger.info("观察模式：针尖已锚定世界原点 [0, 0, 0]")
+            self._update_needle_direction_fast(self._current_quaternion)
+            imu_pos, tip_pos = self._calculate_positions_fast(self._current_quaternion)
+            self.gl_widget.update_data(imu_pos, tip_pos)
+            logger.info("观察模式：针尖固定世界原点，IMU 端随针轴方向移动")
             self.alignment_hud.set_observe_mode(True, connected=True)
             self._refresh_workflow_steps()
             return
@@ -1143,8 +1286,17 @@ class MainWindow(QMainWindow):
         correction = targ_u - curr_u * np.dot(targ_u, curr_u)
 
         thr = self._ALIGN_THRESHOLD_DEG
-        if angle_error_deg < thr:
-            self.alignment_hud.set_status("★ 对准，可进针")
+        if angle_error_deg <= thr:
+            if not self.puncture_controller.range_connected:
+                self.alignment_hud.set_status("请连接测距模块")
+            elif not self.puncture_controller.range_valid:
+                self.alignment_hud.set_status("等待有效测距")
+            elif not self.puncture_controller.baseline_valid:
+                self.alignment_hud.set_status("请记录测距零点")
+            elif self.puncture_controller.state == PunctureDepthController.PUNCTURING:
+                self.alignment_hud.set_status("★ 对准，测距进针")
+            else:
+                self.alignment_hud.set_status("保持对准 0.3 秒")
         elif angle_error_deg < thr * 2:
             self.alignment_hud.set_status("接近目标")
         else:
@@ -1154,80 +1306,12 @@ class MainWindow(QMainWindow):
 
         self._puncture_tick(angle_error_deg)
 
-    # ── 进针逻辑 ───────────────────────────────────────────────────────────────
-    PUNCTURE_DURATION_S = 10.0
-
     def _puncture_tick(self, angle_error_deg: float):
-        """每 alignment_timer 触发一次：判角、推进、更新 UI + 针尖 override。"""
-        if not self._puncture_ready():
+        """只把姿态角送入状态机；深度不由定时器累加。"""
+        if self._is_observe_mode():
             return
-        # 已完成进针：不再 tick，避免 UI 闪烁
-        if self._puncture_finished:
-            return
-
-        thr = self._ALIGN_THRESHOLD_DEG
-        aligned = angle_error_deg < thr
-
-        if not aligned:
-            # 偏离：暂停进针，但保留当前深度（不退回 0），override tip 仍按当前深度
-            if self._puncture_in_progress:
-                self._puncture_in_progress = False
-                self.puncture_panel.update_puncture_depth(
-                    self._puncture_current_depth, self._puncture_plan_depth
-                )
-            return
-
-        if not self._puncture_in_progress:
-            # 首次推进：解除 GL widget 的 fixed_tip 拦截，让 override tip 接管针尖位置
-            self.gl_widget.clear_fixed_tip()
-            self._puncture_in_progress = True
-            self._puncture_last_tick = time.perf_counter()
-            self.puncture_panel.enable_puncture_mode(self._puncture_plan_depth)
-            # 进度条/剩余时间显示对齐
-            self.puncture_panel.update_puncture_depth(
-                self._puncture_current_depth, self._puncture_plan_depth
-            )
-
-        now = time.perf_counter()
-        dt = now - getattr(self, "_puncture_last_tick", now)
-        self._puncture_last_tick = now
-        # 防止首次或异常帧 dt 过大
-        dt = min(dt, 0.1)
-        self._puncture_current_depth += (
-            self._puncture_plan_depth / self.PUNCTURE_DURATION_S
-        ) * dt
-
-        if self._puncture_current_depth >= self._puncture_plan_depth:
-            self._puncture_current_depth = self._puncture_plan_depth
-            self._puncture_in_progress = False
-            self._puncture_finished = True
-            self.puncture_panel.set_puncture_done()
-            # ── 入针完成弹窗 ──
-            if not self._closing:
-                QMessageBox.information(
-                    self,
-                    "穿刺完成",
-                    f"✅ 已到达 Target！\n\n"
-                    f"  Entry→Target 距离: {self._puncture_plan_depth:.1f} mm\n"
-                    f"  实际进针深度: {self._puncture_current_depth:.1f} mm",
-                )
-            return
-        else:
-            self.puncture_panel.update_puncture_depth(
-                self._puncture_current_depth, self._puncture_plan_depth
-            )
-
-        # 每 tick 更新 override tip，让每帧 IMU 数据都用这个 tip 算 imu_pos
-        entry = np.asarray(self.puncture_point, dtype=float)
-        dir_w = np.asarray(self.target_direction_world, dtype=float)
-        self._puncture_override_tip = entry + dir_w * self._puncture_current_depth
-
-    def _puncture_ready(self) -> bool:
-        return (
-            self._puncture_plan_depth > 0
-            and self.device_manager.is_connected
-            and not self._is_observe_mode()
-        )
+        events = self.puncture_controller.update_angle(angle_error_deg)
+        self._consume_puncture_events(events)
 
     def _apply_tip_at_depth(self, depth_mm: float):
         """仅更新 override tip；下一帧 IMU 数据会自动用 override 算 imu_pos 并刷新 3D。"""
@@ -1242,24 +1326,60 @@ class MainWindow(QMainWindow):
         self._puncture_in_progress = False
         self._puncture_finished = False
         self._puncture_override_tip = None
+        self._consume_puncture_events(
+            self.puncture_controller.reset(clear_baseline=True)
+        )
+        self._consume_puncture_events(
+            self.puncture_controller.set_plan_depth(self._puncture_plan_depth)
+        )
+        self.puncture_panel.reset_puncture_ui()
+        if self._puncture_plan_depth > 0.0:
+            self.puncture_panel.update_puncture_depth(
+                0.0, self._puncture_plan_depth
+            )
+            self.puncture_panel.set_puncture_state(
+                self.puncture_controller.state,
+                self.puncture_controller.reason,
+            )
+        self.range_depth_panel.clear_baseline()
         # 重置时重新把 fixed_tip 设回 Entry，让 update_data 拦截正常（非进针态）
         if self.puncture_point is not None:
             self.gl_widget.set_needle_tip_position(self.puncture_point)
-        self.puncture_panel.reset_puncture_ui()
+        self._refresh_workflow_steps()
 
     def _on_target_set(self):
         self._puncture_current_depth = 0.0
         self._puncture_in_progress = False
+        self._puncture_finished = False
+        self._puncture_override_tip = None
+        self.puncture_controller.reset(clear_baseline=True)
+        self.range_depth_panel.clear_baseline()
         if self.puncture_point is None:
             self._puncture_plan_depth = 0.0
+            self._consume_puncture_events(
+                self.puncture_controller.set_plan_depth(0.0)
+            )
             return
         tgt = self._effective_target()
         if tgt is None:
             self._puncture_plan_depth = 0.0
+            self._consume_puncture_events(
+                self.puncture_controller.set_plan_depth(0.0)
+            )
             return
         entry = np.asarray(self.puncture_point, dtype=float)
         vec = tgt - entry
         self._puncture_plan_depth = float(np.linalg.norm(vec))
+        self._consume_puncture_events(
+            self.puncture_controller.set_plan_depth(self._puncture_plan_depth)
+        )
+        self.puncture_panel.update_puncture_depth(
+            0.0, self._puncture_plan_depth
+        )
+        self.puncture_panel.set_puncture_state(
+            self.puncture_controller.state,
+            self.puncture_controller.reason,
+        )
         self._update_target_direction_world()
         self.gl_widget.set_entry_target_line(entry, tgt)
         self._apply_tip_at_depth(0.0)

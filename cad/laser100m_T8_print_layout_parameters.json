@@ -1,0 +1,17 @@
+{
+  "revision": "T8-separated-flat-needle-print-layout",
+  "print_layout": {
+    "purpose": "keep the T7 geometry but separate the three needle bodies for slicing",
+    "body_x_start_mm": 15.0,
+    "body_y_centers_mm": {
+      "root": -35.0,
+      "mid": 0.0,
+      "tip": 35.0
+    },
+    "pin_x_start_mm": 120.0,
+    "pin_y_centers_mm": [-35.0, 0.0],
+    "bed_z_min_mm": 0.0,
+    "minimum_body_row_gap_mm": 25.0,
+    "recommended_brim_mm": "3-5"
+  }
+}

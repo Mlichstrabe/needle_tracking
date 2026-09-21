@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>手术探针定位系统 — UI/UX 审查报告</title>
+<style>
+  :root {
+    --bg: #f8f9fb;
+    --card: #ffffff;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+    --accent: #3b82f6;
+    --accent-light: #eff6ff;
+    --danger: #ef4444;
+    --danger-light: #fef2f2;
+    --warning: #f59e0b;
+    --warning-light: #fffbeb;
+    --success: #10b981;
+    --success-light: #ecfdf5;
+    --border: #e2e8f0;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-lg: 0 4px 12px rgba(0,0,0,0.1);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --font: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    --mono: "Cascadia Code", "Consolas", monospace;
+    --max-width: 1100px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 24px;
+  }
+
+  .container { max-width: var(--max-width); margin: 0 auto; }
+
+  /* ── Hero ── */
+  .hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+    color: #f1f5f9;
+    border-radius: 16px;
+    padding: 48px 40px;
+    margin-bottom: 32px;
+    border: 1px solid #334155;
+  }
+  .hero h1 {
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 8px;
+    color: #f8fafc;
+  }
+  .hero .subtitle {
+    font-size: 16px;
+    color: #94a3b8;
+    margin-bottom: 16px;
+  }
+  .hero .badge-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.3);
+    border-radius: 20px; padding: 6px 14px; font-size: 13px;
+  }
+  .badge::before { content: "●"; font-size: 8px; }
+  .badge.ok { background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.3); }
+  .badge.ok::before { color: #10b981; }
+  .badge.warn { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.3); }
+  .badge.warn::before { color: #f59e0b; }
+  .badge.danger { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.3); }
+  .badge.danger::before { color: #ef4444; }
+
+  /* ── Summary Cards ── */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .summary-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: var(--shadow);
+  }
+  .summary-card h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .summary-card .number {
+    font-size: 40px;
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .summary-card .number.danger { color: var(--danger); }
+  .summary-card .number.warning { color: var(--warning); }
+  .summary-card .desc { font-size: 13px; color: var(--text-secondary); margin-top: 6px; }
+
+  /* ── Section ── */
+  .section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    margin-bottom: 24px;
+    box-shadow: var(--shadow);
+  }
+  .section h2 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: var(--text);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .section h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    background: var(--accent); color: white;
+    border-radius: 8px; font-size: 15px; flex-shrink: 0;
+  }
+  .section h2 .num.danger { background: var(--danger); }
+  .section h2 .num.warning { background: var(--warning); }
+  .section .section-desc {
+    color: var(--text-secondary); font-size: 14px;
+    margin-bottom: 24px; margin-left: 42px;
+  }
+
+  /* ── Issue Card ── */
+  .issue {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+  .issue-header {
+    padding: 16px 20px;
+    background: var(--accent-light);
+    border-bottom: 1px solid #bfdbfe;
+    display: flex; align-items: flex-start; gap: 12px;
+  }
+  .issue-header .sev {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 48px; height: 24px; border-radius: 12px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .sev.critical { background: #fecaca; color: #991b1b; }
+  .sev.high { background: #fde68a; color: #92400e; }
+  .sev.medium { background: #bfdbfe; color: #1e40af; }
+  .sev.low { background: #d1d5db; color: #374151; }
+  .issue-header h3 { font-size: 16px; font-weight: 700; flex: 1; }
+  .issue-body { padding: 20px; }
+
+  .issue-body h4 {
+    font-size: 13px; color: var(--text-secondary); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 8px; margin-top: 16px;
+  }
+  .issue-body h4:first-child { margin-top: 0; }
+  .issue-body p { font-size: 14px; margin-bottom: 10px; }
+
+  /* ── Wireframe Comparison ── */
+  .wireframe-compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  @media (max-width: 760px) {
+    .wireframe-compare { grid-template-columns: 1fr; }
+  }
+  .wf-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .wf-panel .wf-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; padding: 8px 12px;
+  }
+  .wf-panel.before .wf-label { background: #fef2f2; color: #991b1b; }
+  .wf-panel.after .wf-label { background: #ecfdf5; color: #065f46; }
+  .wf-panel svg { display: block; width: 100%; height: auto; background: #fafbfd; }
+
+  /* ── Solution Block ── */
+  .solution {
+    background: var(--success-light);
+    border: 1px solid #a7f3d0;
+    border-radius: var(--radius-sm);
+    padding: 16px 20px;
+    margin-top: 16px;
+  }
+  .solution h4 {
+    color: #065f46; margin-top: 0; margin-bottom: 6px;
+  }
+  .solution ul { margin: 0; padding-left: 18px; }
+  .solution li { font-size: 14px; margin-bottom: 4px; color: #064e3b; }
+
+  /* ── Table ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 12px 0;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: #f1f5f9;
+    font-weight: 700;
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  /* ── Priority Matrix ── */
+  .priority-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .priority-grid .quadrant {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px;
+  }
+  .quadrant.p0 { background: #fef2f2; border-color: #fecaca; }
+  .quadrant.p1 { background: #fffbeb; border-color: #fde68a; }
+  .quadrant.p2 { background: var(--accent-light); border-color: #bfdbfe; }
+  .quadrant.p3 { background: #f8fafc; border-color: #e2e8f0; }
+  .quadrant h4 { font-size: 14px; font-weight: 700; margin-bottom: 6px; margin-top: 0; text-transform: none; color: var(--text); }
+  .quadrant ul { padding-left: 16px; font-size: 13px; }
+  .quadrant li { margin-bottom: 3px; }
+
+  strong { color: var(--accent); }
+  code {
+    font-family: var(--mono);
+    background: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- HERO -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="hero">
+  <h1>手术探针定位系统 — UI/UX 审查报告</h1>
+  <p class="subtitle">穿刺训练模式 &amp; 姿态观察模式 · 全界面深度审查 · PyQt5 桌面应用</p>
+  <div class="badge-row">
+    <span class="badge danger">发现 12 个问题</span>
+    <span class="badge warn">3 个高优先级</span>
+    <span class="badge">5 个中优先级</span>
+    <span class="badge ok">4 个低优先级</span>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- SUMMARY -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="summary-grid">
+  <div class="summary-card">
+    <h3>信息架构缺陷</h3>
+    <div class="number warning">4</div>
+    <div class="desc">层级混乱、编号不一致、功能分类重叠</div>
+  </div>
+  <div class="summary-card">
+    <h3>交互流程痛点</h3>
+    <div class="number danger">3</div>
+    <div class="desc">模态弹窗过多、操作步骤冗余、无快捷键</div>
+  </div>
+  <div class="summary-card">
+    <h3>视觉层级问题</h3>
+    <div class="number warning">3</div>
+    <div class="desc">关键反馈区过小、功能优先级倒置</div>
+  </div>
+  <div class="summary-card">
+    <h3>布局/响应式</h3>
+    <div class="number">2</div>
+    <div class="desc">侧栏不可折叠、三栏刚性分配</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- ISSUE 1: 信息架构 -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="num">1</span> 信息架构分析</h2>
+  <p class="section-desc">分析界面内容的组织方式、层级关系与导航结构。</p>
+
+  <!-- Issue 1.1 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev high">高</span>
+      <h3>1.1 右栏三级功能编号混乱，与顶栏工作流不匹配</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p>右侧面板从上到下依次为：<code>② 对准 Target</code> → <code>① 选择 Entry</code> → <code>② 选择 Target</code> → <code>③ 进针进度</code>。而在 <code>PuncturePointPanel</code> 的 <code>_init_puncture_ui</code> 中（第 712 行），<code>① 选择 Entry</code> 通过 <code>insertWidget(0, ...)</code> 插在最前面，导致阅读时先看到 ② 再看到 ①，视觉顺序与实际流程完全颠倒。</p>
+      <p>同时顶栏 WorkflowStepper 展示的四步是：「加载 CT → 选 Entry → 连接 IMU → 对准 Target」，但右栏又包含一个独立的 ③ 路径引导面板（SimulationPanel），它与对准 Target 的功能高度重叠。</p>
+
+      <h4>当前结构（混乱）</h4>
+      <div class="wireframe-compare">
+        <div class="wf-panel before">
+          <div class="wf-label">当前：编号顺序混乱</div>
+          <svg viewBox="0 0 320 400" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="320" height="400" fill="#fafbfd"/>
+            <!-- Right Panel -->
+            <rect x="10" y="10" width="300" height="60" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+            <text x="24" y="34" font-family="sans-serif" font-size="12" fill="#64748b">② 对准 Target（AlignmentHudPanel）</text>
+            <text x="24" y="52" font-family="sans-serif" font-size="10" fill="#94a3b8">GuidanceArrowWidget + 状态</text>
+
+            <rect x="10" y="80" width="300" height="50" rx="6" fill="#fef2f2" stroke="#fecaca"/>
+            <text x="24" y="104" font-family="sans-serif" font-size="12" fill="#991b1b">← ① 选 Entry（insertWidget 插入顶部）</text>
+
+            <rect x="10" y="140" width="300" height="80" rx="6" fill="#fffbeb" stroke="#fde68a"/>
+            <text x="24" y="164" font-family="sans-serif" font-size="12" fill="#92400e">② 选 Target</text>
+            <text x="24" y="184" font-family="sans-serif" font-size="10" fill="#a16207">3D 点击 / 使用默认</text>
+            <text x="24" y="200" font-family="sans-serif" font-size="10" fill="#a16207">Entry→Target 距离</text>
+
+            <rect x="10" y="230" width="300" height="100" rx="6" fill="#ecfdf5" stroke="#a7f3d0"/>
+            <text x="24" y="254" font-family="sans-serif" font-size="12" fill="#065f46">③ 进针进度</text>
+            <rect x="24" y="264" width="270" height="14" rx="7" fill="#d1fae5" stroke="#6ee7b7"/>
+            <rect x="24" y="264" width="80" height="14" rx="7" fill="#10b981"/>
+            <text x="24" y="296" font-family="sans-serif" font-size="10" fill="#065f46">剩余: -- mm  [重置]</text>
+            <text x="24" y="314" font-family="sans-serif" font-size="10" fill="#065f46">▶ 对准后可开始进针</text>
+
+            <rect x="10" y="340" width="300" height="50" rx="6" fill="#f5f3ff" stroke="#ddd6fe"/>
+            <text x="24" y="364" font-family="sans-serif" font-size="12" fill="#6d28d9">③ 路径引导（SimulationPanel）</text>
+          </svg>
+        </div>
+        <div class="wf-panel after">
+          <div class="wf-label">优化：线性编号 + 统一步骤</div>
+          <svg viewBox="0 0 320 400" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="320" height="400" fill="#fafbfd"/>
+            <!-- Optimized -->
+            <rect x="10" y="10" width="300" height="40" rx="6" fill="#e0f2fe" stroke="#7dd3fc"/>
+            <text x="24" y="36" font-family="sans-serif" font-size="12" fill="#0369a1">步骤 ① 选择穿刺点</text>
+
+            <rect x="10" y="58" width="300" height="100" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+            <text x="24" y="80" font-family="sans-serif" font-size="11" fill="#64748b">Entry: X Y Z 坐标 · 法线方向</text>
+            <text x="24" y="98" font-family="sans-serif" font-size="11" fill="#64748b">Target: X Y Z 坐标 · Entry→Target 距离</text>
+            <rect x="24" y="110" width="130" height="22" rx="5" fill="#10b981"/>
+            <text x="30" y="126" font-family="sans-serif" font-size="10" fill="white">使用默认 Target</text>
+            <rect x="162" y="110" width="130" height="22" rx="5" fill="#1e293b"/>
+            <text x="172" y="126" font-family="sans-serif" font-size="10" fill="#f1f5f9">3D 选 Target</text>
+
+            <rect x="10" y="168" width="300" height="90" rx="6" fill="#e0f2fe" stroke="#7dd3fc"/>
+            <text x="24" y="194" font-family="sans-serif" font-size="12" fill="#0369a1">步骤 ② 对准 Target</text>
+            <!-- simplified compass -->
+            <circle cx="90" cy="230" r="35" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+            <line x1="90" y1="200" x2="90" y2="260" stroke="#cbd5e1" stroke-width="0.5"/>
+            <line x1="60" y1="230" x2="120" y2="230" stroke="#cbd5e1" stroke-width="0.5"/>
+            <circle cx="105" cy="218" r="5" fill="#ef4444"/>
+            <line x1="90" y1="230" x2="105" y2="218" stroke="#ef4444" stroke-width="2"/>
+            <rect x="140" y="210" width="150" height="40" rx="5" fill="#ecfdf5" stroke="#a7f3d0"/>
+            <text x="150" y="226" font-family="sans-serif" font-size="11" fill="#065f46">偏差: 2.3° ★ 对准</text>
+            <text x="150" y="242" font-family="sans-serif" font-size="10" fill="#059669">可进针</text>
+
+            <rect x="10" y="268" width="300" height="60" rx="6" fill="#e0f2fe" stroke="#7dd3fc"/>
+            <text x="24" y="294" font-family="sans-serif" font-size="12" fill="#0369a1">步骤 ③ 进针进度</text>
+            <rect x="24" y="302" width="270" height="14" rx="7" fill="#d1fae5"/>
+            <rect x="24" y="302" width="120" height="14" rx="7" fill="#10b981"/>
+
+            <rect x="10" y="338" width="300" height="50" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-dasharray="4"/>
+            <text x="24" y="364" font-family="sans-serif" font-size="12" fill="#94a3b8">辅助：姿态锁定 / 视角 · 自动隐藏</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li><strong>统一编号</strong>：右栏从上到下严格按 ① Entry+Target → ② 对准 → ③ 进针 排列，与顶栏工作流保持一致。</li>
+          <li><strong>合并 Entry 与 Target</strong>：将 Entry 和 Target 选择放在同一个 block 内，因为它们是紧密关联的穿刺计划步骤。</li>
+          <li><strong>降级 SimulationPanel</strong>：③ 路径引导面板与 ② 对准 Target 的功能高度重叠，建议将其中的「姿态锁定」功能合并到对准面板中，或作为辅助工具折叠到底部。</li>
+          <li><strong>预期效果</strong>：用户视线只需从上往下扫描一次即可了解完整流程，降低认知负荷。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 1.2 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev medium">中</span>
+      <h3>1.2 工作模式切换位置不当，信息层级倒挂</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p>「穿刺训练 / 姿态观察」模式切换被放在左栏「设备 · 串口」面板内部（第 367 行 <code>mode_combo</code>），这是一个决定整个应用行为模式的<strong>全局配置</strong>，却被埋在设备连接的面板里。切换模式时会强制断开 IMU（第 456 行），但用户无从预知这一副作用。</p>
+      <p>此外，左栏从上到下依次是：<code>设备 · 串口</code> → <code>影像 · DICOM</code> → <code>遥测 · IMU</code>，但实际工作流是先加载 CT 再连设备，顺序反了。</p>
+
+      <div class="wireframe-compare">
+        <div class="wf-panel before">
+          <div class="wf-label">当前：模式藏在设备面板</div>
+          <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="320" height="180" fill="#fafbfd"/>
+            <rect x="10" y="10" width="300" height="160" rx="6" fill="#101722" opacity="0.95"/>
+            <text x="24" y="34" font-family="sans-serif" font-size="12" fill="#5ec8f0" font-weight="bold">设备 · 串口</text>
+            <rect x="14" y="44" width="290" height="22" rx="4" fill="#0c121c" stroke="#2e415a"/>
+            <text x="26" y="59" font-family="sans-serif" font-size="10" fill="#94a3b8">工作模式 | 穿刺训练 ▼</text>
+            <rect x="14" y="74" width="60" height="20" rx="3" fill="#151f2d"/>
+            <text x="20" y="88" font-family="sans-serif" font-size="10" fill="#64748b">状态</text>
+            <circle cx="94" cy="84" r="4" fill="#ef4444"/>
+            <text x="104" y="88" font-family="sans-serif" font-size="10" fill="#ef4444">未连接</text>
+            <rect x="14" y="102" width="100" height="22" rx="4" fill="#0c121c" stroke="#2e415a"/>
+            <text x="24" y="117" font-family="sans-serif" font-size="9" fill="#94a3b8">COM3 — USB Serial ▼</text>
+            <rect x="120" y="102" width="30" height="22" rx="4" fill="#1a2535"/>
+            <text x="125" y="117" font-family="sans-serif" font-size="10" fill="#d4dee8">↻</text>
+            <rect x="14" y="130" width="140" height="22" rx="4" fill="#1a8f5c"/>
+            <text x="20" y="146" font-family="sans-serif" font-size="10" fill="white">连接设备</text>
+            <rect x="160" y="130" width="50" height="22" rx="4" fill="#b84252"/>
+            <text x="166" y="146" font-family="sans-serif" font-size="10" fill="white">断开</text>
+          </svg>
+        </div>
+        <div class="wf-panel after">
+          <div class="wf-label">优化：模式提至顶部 + 重排面板</div>
+          <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="320" height="180" fill="#fafbfd"/>
+            <!-- Mode selector at top -->
+            <rect x="10" y="8" width="300" height="30" rx="6" fill="#0f172a"/>
+            <text x="20" y="28" font-family="sans-serif" font-size="11" fill="#5ec8f0">模式</text>
+            <rect x="60" y="12" width="110" height="22" rx="4" fill="#1a2f48" stroke="#5ec8f0"/>
+            <text x="68" y="28" font-family="sans-serif" font-size="10" fill="white">穿刺训练 ⬤</text>
+            <rect x="178" y="12" width="110" height="22" rx="4" fill="#151d2a" stroke="#2a3d56"/>
+            <text x="186" y="28" font-family="sans-serif" font-size="10" fill="#64748b">姿态观察 ○</text>
+
+            <!-- Reordered: CT first -->
+            <rect x="10" y="46" width="300" height="60" rx="6" fill="#101722" opacity="0.95"/>
+            <text x="24" y="68" font-family="sans-serif" font-size="11" fill="#5ec8f0">影像 · DICOM    ① 先执行</text>
+            <rect x="24" y="78" width="260" height="22" rx="4" fill="#1a8f5c"/>
+            <text x="30" y="94" font-family="sans-serif" font-size="10" fill="white">选择 DICOM 文件夹</text>
+
+            <rect x="10" y="114" width="300" height="58" rx="6" fill="#101722" opacity="0.95"/>
+            <text x="24" y="136" font-family="sans-serif" font-size="11" fill="#5ec8f0">设备 · 串口    ② 后执行</text>
+            <rect x="24" y="146" width="130" height="20" rx="3" fill="#0c121c" stroke="#2e415a"/>
+            <text x="34" y="160" font-family="sans-serif" font-size="9" fill="#94a3b8">COM3 — USB Serial ▼</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li><strong>将工作模式提升为顶栏一级切换</strong>：用两个并排的 pill/tab 放在 Title 下方，作为全局模式标识。</li>
+          <li><strong>重排左栏顺序</strong>：CT 导入 → 设备连接 → IMU 遥测，与实际操作流程一致。</li>
+          <li><strong>切换模式时给出非阻塞提示</strong>：用 inline toast 替代 QMessageBox，告知用户切换将断开 IMU。</li>
+          <li><strong>预期效果</strong>：用户一眼看到当前模式，减少误操作；面板顺序符合直觉，新手按从上到下点击即可完成设置。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 1.3 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev medium">中</span>
+      <h3>1.3 对准 HUD（GuidanceArrowWidget）信息密度不足</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p><code>GuidanceArrowWidget</code> 展示了偏差角的偏移方向 + 角度数值，但缺乏「<strong>应该往哪个方向转动探针</strong>」的直观指示。用户看到十字线上的偏移点，需要在大脑中将其映射为手部动作（例如"点在上方意味着往下转"），这在训练场景下增加了解码时间。</p>
+      <p>同时该 widget 最大只有 <strong>152×152px</strong>（第 969 行），在 1920×1080 屏幕上仅占约 8% 宽，而这是整个对准流程中<strong>最关键的实时反馈</strong>。</p>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li><strong>增大罗盘尺寸</strong>：将最大尺寸放宽到 220×220，在右栏中占据更显著的视觉权重。</li>
+          <li><strong>添加箭头动画</strong>：从偏移点画一个指向圆心的渐变箭头（"往这边转"），颜色动态映射偏差角。</li>
+          <li><strong>添加文字方向提示</strong>：在罗盘下方显示如「↑ 向上倾斜 · 向左旋转 4°」的具体操作指令。</li>
+          <li><strong>预期效果</strong>：用户无需二次解码，直接按提示方向调整探针，缩短对准时间。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 1.4 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev low">低</span>
+      <h3>1.4 缺少全局状态摘要面板</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p>顶栏 HeaderStatusPill 仅显示「IMU 已连接 · 200 Hz」或「IMU 未连接」。但训练过程中用户还需要快速了解：CT 是否已加载、Entry 和 Target 是否已选定、当前偏差角。这些关键状态分散在左侧和右侧各个面板中，没有一处汇总视图。</p>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li>在顶栏添加 4 个紧凑的 status chip：<code>[CT: ✓] [Entry: ✓] [Target: ✓] [偏差: 2.3°]</code></li>
+          <li>每个 chip 用颜色编码状态（绿=完成，黄=进行中，灰=待定）</li>
+          <li>点击 chip 可快速滚动到对应的面板区域</li>
+          <li><strong>预期效果</strong>：用户一瞥顶栏即可了解全局状态，无需滚动侧栏。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- ISSUE 2: 交互流程 -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="num danger">2</span> 交互流程分析</h2>
+  <p class="section-desc">分析操作步骤的效率、反馈及时性与流程流畅度。</p>
+
+  <!-- Issue 2.1 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev critical">严重</span>
+      <h3>2.1 过多模态弹窗打断工作流</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p>整个流程中至少有 <strong>10 处 QMessageBox</strong> 调用（连接设备、选择 Entry、选择 Target、使用默认、校准完成、初始姿态校准、竖直标定完成、保存视角、连接观察模式、Target 重选）。这些弹窗强制用户点「确定」才能继续，严重打断操作节奏。</p>
+      <p>特别是 <code>_on_puncture_point_selected</code>（第 1017 行）和 <code>_on_target_point_selected</code>（第 928 行）在选点完成后弹出确认框，每次都在 3D 视图前面盖住——用户刚在 3D 上点完，还没看清选点位置就被弹窗遮住。</p>
+
+      <div class="wireframe-compare">
+        <div class="wf-panel before"><div class="wf-label">当前：弹窗打断</div>
+          <svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="320" height="200" fill="#fafbfd"/>
+            <rect x="10" y="10" width="300" height="180" rx="6" fill="#0f172a" opacity="0.9"/>
+            <!-- 3D model behind -->
+            <ellipse cx="160" cy="65" rx="90" ry="50" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+            <text x="160" y="70" font-family="sans-serif" font-size="10" fill="#475569" text-anchor="middle">3D 视图</text>
+            <!-- Modal overlay -->
+            <rect x="10" y="10" width="300" height="180" rx="6" fill="rgba(0,0,0,0.4)"/>
+            <rect x="40" y="50" width="240" height="100" rx="8" fill="white" stroke="#e2e8f0"/>
+            <text x="160" y="80" font-family="sans-serif" font-size="12" fill="#1e293b" text-anchor="middle">Entry 已选择</text>
+            <text x="160" y="100" font-family="sans-serif" font-size="10" fill="#64748b" text-anchor="middle">[X:12.3, Y:45.6, Z:-8.2] mm</text>
+            <text x="160" y="116" font-family="sans-serif" font-size="10" fill="#64748b" text-anchor="middle">规划深度: 65.0 mm</text>
+            <rect x="130" y="128" width="60" height="18" rx="4" fill="#3b82f6"/>
+            <text x="160" y="141" font-family="sans-serif" font-size="9" fill="white" text-anchor="middle">Ok</text>
+          </svg>
+        </div>
+        <div class="wf-panel after"><div class="wf-label">优化：inline toast</div>
+          <svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="320" height="200" fill="#fafbfd"/>
+            <rect x="10" y="10" width="300" height="180" rx="6" fill="#0f172a" opacity="0.9"/>
+            <ellipse cx="160" cy="65" rx="90" ry="50" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+            <text x="160" y="70" font-family="sans-serif" font-size="10" fill="#475569" text-anchor="middle">3D 视图（可见）</text>
+            <!-- Inline toast -->
+            <rect x="40" y="120" width="240" height="36" rx="6" fill="#ecfdf5" stroke="#6ee7b7" opacity="0.95"/>
+            <circle cx="56" cy="138" r="6" fill="#10b981"/>
+            <text x="68" y="143" font-family="sans-serif" font-size="11" fill="#065f46">Entry 已选择: [12.3, 45.6, -8.2] · 深度 65.0mm</text>
+            <!-- Right panel updated -->
+            <rect x="10" y="164" width="300" height="22" rx="4" fill="#ecfdf5"/>
+            <text x="20" y="180" font-family="sans-serif" font-size="9" fill="#065f46">✓ Entry 设定 · Target: 默认 (62.3mm) · 对准: 8.7°</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li><strong>用顶部 toast 通知替代所有非关键弹窗</strong>：3 秒自动消失，不阻塞操作。</li>
+          <li><strong>保留弹窗仅用于关键确认</strong>：如「切换模式将断开 IMU，确定？」</li>
+          <li><strong>选点结果直接在右栏面板更新</strong>：Entry 坐标、Target 坐标、规划深度在面板内实时刷新，用户自然能看到。</li>
+          <li><strong>预期效果</strong>：操作流程顺畅无中断，3D 视图不会反复被遮挡。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 2.2 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev high">高</span>
+      <h3>2.2 3D 选点缺少视觉引导与模式提示</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p>点击「开始选择穿刺点」后，3D 视图<strong>没有任何视觉提示</strong>告知用户当前处于选点模式。鼠标悬停在模型上时指针不变化，也没有高亮效果。用户不知道是应该点击、拖拽还是旋转视角——实际上左键被 <code>PunctureGLViewWidget.mousePressEvent</code> 拦截用于选点（第 27 行），但这与用户"左键旋转视角"的直觉相悖。</p>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li><strong>选点模式触发时光标变为十字准星</strong>（<code>Qt.CrossCursor</code>）。</li>
+          <li><strong>3D 视图顶部叠加半透明条幅</strong>：「🎯 请在头部模型表面点击选择 Entry 点 | 右键取消」</li>
+          <li><strong>添加 mousemove 高亮</strong>：鼠标悬停的面片临时变色，显示点击将落在何处。</li>
+          <li><strong>右键取消选点模式</strong>，恢复到正常导航状态。</li>
+          <li><strong>预期效果</strong>：用户明确知道自己处于选点模式，减少误操作。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 2.3 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev medium">中</span>
+      <h3>2.3 CT 加载缺少文件选择器，硬编码路径</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p><code>CTModelPanel._on_load_clicked</code>（第 551 行）硬编码了 <code>C:\Users\Lu\PyCharmMiscProject\needle_tracking\CT6</code>，这意味着该应用<strong>只能由特定用户在特定目录结构下使用</strong>。如果 DICOM 数据不在该路径下，用户无法加载。</p>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li>使用 <code>QFileDialog.getExistingDirectory</code> 让用户选择 DICOM 文件夹。</li>
+          <li>在 <code>config/</code> 下记录最近使用的路径，下次启动时作为默认值。</li>
+          <li>预期效果：应用可在任意环境使用，无需修改代码。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- ISSUE 3: 视觉层级 -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="num warning">3</span> 视觉层级分析</h2>
+  <p class="section-desc">分析颜色、字体、间距等视觉元素的优先级与对比度。</p>
+
+  <!-- Issue 3.1 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev high">高</span>
+      <h3>3.1 实时对准偏差角 — 最重要的信息被最小化显示</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p>对准偏差角是穿刺训练中<strong>最关键的实时反馈</strong>，但当前它被夹在 GuidanceArrowWidget 底部的一行小字中（<code>f"{self._angle_deg:.1f}°"</code>，Consolas 10px，第 1071-1077 行）。而 IMU 面板中的芯片欧拉角和四元数（对训练无直接帮助的原始数据）却占据了大量空间。</p>
+
+      <div class="wireframe-compare">
+        <div class="wf-panel before"><div class="wf-label">当前：偏差角淹没在面板中</div>
+          <svg viewBox="0 0 320 250" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="320" height="250" fill="#fafbfd"/>
+            <rect x="10" y="10" width="300" height="230" rx="6" fill="#101722" opacity="0.95"/>
+            <text x="24" y="36" font-family="sans-serif" font-size="12" fill="#5ec8f0">② 对准 Target</text>
+            <circle cx="160" cy="100" r="55" fill="#0e141e" stroke="#3d5578" stroke-width="1.5"/>
+            <line x1="120" y1="100" x2="200" y2="100" stroke="#2a3d56"/>
+            <line x1="160" y1="60" x2="160" y2="140" stroke="#2a3d56"/>
+            <circle cx="160" cy="100" r="3" fill="#5ec8f0"/>
+            <circle cx="175" cy="82" r="7" fill="#ef4444"/>
+            <line x1="160" y1="100" x2="175" y2="82" stroke="#ef4444" stroke-width="2"/>
+            <text x="160" y="170" font-family="sans-serif" font-size="add" fill="#5ec8f0" text-anchor="middle">12.7°</text>
+            <text x="160" y="195" font-family="sans-serif" font-size="11" fill="#b8c8d8" text-anchor="middle">需调整姿态</text>
+            <!-- Big IMU panel taking space -->
+            <text x="24" y="220" font-family="sans-serif" font-size="9" fill="#475569">遥测 · IMU (大量原始数据显示)</text>
+          </svg>
+        </div>
+        <div class="wf-panel after"><div class="wf-label">优化：角度放大 + 方向指令</div>
+          <svg viewBox="0 0 320 250" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="320" height="250" fill="#fafbfd"/>
+            <rect x="10" y="10" width="300" height="230" rx="6" fill="#101722" opacity="0.95"/>
+            <text x="24" y="36" font-family="sans-serif" font-size="12" fill="#5ec8f0">② 对准 Target</text>
+            <!-- LARGER compass -->
+            <circle cx="160" cy="90" r="65" fill="#0e141e" stroke="#3d5578" stroke-width="1.5"/>
+            <line x1="110" y1="90" x2="210" y2="90" stroke="#2a3d56"/>
+            <line x1="160" y1="40" x2="160" y2="140" stroke="#2a3d56"/>
+            <circle cx="160" cy="90" r="3" fill="#5ec8f0"/>
+            <circle cx="178" cy="68" r="9" fill="#ef4444"/>
+            <line x1="160" y1="90" x2="178" y2="68" stroke="#ef4444" stroke-width="2.5"/>
+            <!-- BIG angle number -->
+            <text x="160" y="175" font-family="monospace" font-size="36" font-weight="800" fill="#ef4444" text-anchor="middle">12.7°</text>
+            <!-- Direction instruction -->
+            <rect x="70" y="185" width="180" height="22" rx="5" fill="#fef2f2"/>
+            <text x="160" y="201" font-family="sans-serif" font-size="11" fill="#991b1b" text-anchor="middle">↑ 向下倾斜  · 向右旋转</text>
+            <text x="160" y="222" font-family="sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">需调整姿态 · 目标 ≤ 3°</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li><strong>将偏差角度放大为核心视觉元素</strong>：36px+ 字号，居中对准面板顶部。</li>
+          <li><strong>添加可操作的方向指令</strong>：根据 guidance 的 x/y 分量生成自然语言提示（↑/↓/←/→ + 具体动作）。</li>
+          <li><strong>角度颜色映射增强</strong>：绿(&lt;3°)→黄(3-6°)→橙(6-10°)→红(&gt;10°)，整行文字底色变化。</li>
+          <li><strong>预期效果</strong>：用户一眼看清当前偏差和需要做的调整，无需在大脑中解码坐标。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 3.2 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev medium">中</span>
+      <h3>3.2 左栏三块区域视觉权重一致，缺乏焦点引导</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p>左栏的三个 block（设备、影像、IMU）使用了完全相同的 <code>PrepSection</code> 样式（相同的标题栏、边框、间距）。在任何时刻只有一个 block 是需要用户操作的，但视觉上没有突出重点。</p>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li>根据顶栏工作流状态，动态高亮<strong>当前步骤对应的 panel</strong>：标题栏变亮、添加左侧彩色竖线指示器。</li>
+          <li>当前步骤的 block 默认展开，已完成步骤的 block 自动折叠。</li>
+          <li>预期效果：用户视线自然被引导到下一步操作区域。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 3.3 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev low">低</span>
+      <h3>3.3 按钮样式语义一致性不足</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p>部分按钮的颜色与其含义不匹配：</p>
+      <table>
+        <tr><th>按钮</th><th>当前 variant</th><th>问题</th></tr>
+        <tr><td>「重新选择穿刺点」</td><td><code>danger</code></td><td>红色暗示危险操作，但重选只是撤销。</td></tr>
+        <tr><td>「停止引导模式」</td><td><code>danger</code></td><td>红色暗示危险，但停止引导是正常操作。</td></tr>
+        <tr><td>「选择 DICOM 文件夹」</td><td><code>primary</code></td><td>绿色——正确（鼓励操作）。</td></tr>
+        <tr><td>「连接设备」</td><td><code>primary</code></td><td>绿色——正确。</td></tr>
+        <tr><td>「断开」</td><td><code>danger</code></td><td>红色——合理（断开确有一定风险）。</td></tr>
+      </table>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li><code>danger</code> 仅用于不可逆操作（如清理数据、删除）。</li>
+          <li>「重新选择」使用 <code>ghost</code> 或 <code>secondary</code>。</li>
+          <li>「停止引导」使用 <code>secondary</code>。</li>
+          <li>预期效果：按钮颜色传达正确的操作风险语义。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- ISSUE 4: 布局与响应式 -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="num">4</span> 布局与响应式分析</h2>
+  <p class="section-desc">分析三栏布局的弹性、窗口缩放适配与侧栏可用性。</p>
+
+  <!-- Issue 4.1 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev medium">中</span>
+      <h3>4.1 三栏刚性分配，侧栏不可折叠/隐藏</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p><code>QSplitter.setCollapsible(0, False)</code> 和 <code>setCollapsible(2, False)</code>（第 190-191 行）禁止了左栏和右栏的折叠。在训练过程中，一旦 DICOM 加载完成且设备连接好，左栏几乎不再需要交互，但它固定占据 28% 宽度，压缩了 3D 视口的空间。同理，在对准训练时右栏的罗盘是最重要的，但当前只占 24%。</p>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li><strong>允许侧栏折叠</strong>：在 QSplitter 的 handle 上加 collapse 按钮（▶/◀ 三角形）。</li>
+          <li><strong>添加 F11 全屏 3D 模式</strong>：隐藏两侧，仅保留 3D 视图 + 浮动 HUD（罗盘叠加在 3D 角落）。</li>
+          <li><strong>1:4:1.5 的默认比例</strong>（而非 1:3:1），在对准阶段给予 3D 视图更多空间。</li>
+          <li><strong>预期效果</strong>：训练时钟爱大 3D 视图的用户可以折叠侧栏，需要设置时再展开。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 4.2 -->
+  <div class="issue">
+    <div class="issue-header">
+      <span class="sev low">低</span>
+      <h3>4.2 窗口最小尺寸过大，小屏设备受限</h3>
+    </div>
+    <div class="issue-body">
+      <h4>问题描述</h4>
+      <p><code>setMinimumSize(1024, 680)</code>（第 375 行）意味着 1366×768 的笔记本屏幕可用空间约为 95% 宽 × 90% 高，几乎没有余地。实际上三栏布局在 900px 宽时仍然可用（如果允许左侧缩窄到 240px）。</p>
+
+      <div class="solution">
+        <h4>优化方案</h4>
+        <ul>
+          <li>降低最小宽度到 900px，缩小侧栏最小宽度到 240px。</li>
+          <li>预期效果：1366×768 笔记本也能舒适使用。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- PRIORITY MATRIX -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="num">5</span> 优化优先级矩阵</h2>
+  <p class="section-desc">按影响程度 × 实现成本的二维矩阵排列所有问题。</p>
+
+  <div class="priority-grid">
+    <div class="quadrant p0">
+      <h4>P0 — 立即修复（高影响 + 低成本）</h4>
+      <ul>
+        <li><strong>2.1</strong> — 弹窗改 toast 通知</li>
+        <li><strong>2.3</strong> — CT 路径改为文件选择器</li>
+        <li><strong>3.3</strong> — 按钮颜色语义修正</li>
+        <li><strong>1.4</strong> — 顶栏状态 chips</li>
+      </ul>
+    </div>
+    <div class="quadrant p1">
+      <h4>P1 — 尽快修复（高影响 + 中成本）</h4>
+      <ul>
+        <li><strong>1.1</strong> — 右栏编号统一 + 面板合并</li>
+        <li><strong>3.1</strong> — 偏差角放大 + 方向指令</li>
+        <li><strong>1.2</strong> — 模式切换提升至顶栏</li>
+      </ul>
+    </div>
+    <div class="quadrant p2">
+      <h4>P2 — 计划迭代（中影响 + 中成本）</h4>
+      <ul>
+        <li><strong>4.1</strong> — 侧栏折叠功能</li>
+        <li><strong>2.2</strong> — 3D 选点视觉引导</li>
+        <li><strong>3.2</strong> — 左栏焦点高亮引导</li>
+      </ul>
+    </div>
+    <div class="quadrant p3">
+      <h4>P3 — 逐步完善（低影响）</h4>
+      <ul>
+        <li><strong>4.2</strong> — 降低最小窗口宽度</li>
+        <li><strong>1.3</strong> — 罗盘信息密度增强</li>
+        <li>全局键盘快捷键体系</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- OVERALL WIREFRAME -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="num">6</span> 优化后整体布局蓝图</h2>
+  <p class="section-desc">整合所有优化建议后的目标界面结构。</p>
+
+  <svg viewBox="0 0 960 540" xmlns="http://www.w3.org/2000/svg" style="width:100%; max-width:960px; display:block; margin: 0 auto;">
+    <rect width="960" height="540" rx="14" fill="#0a0e14"/>
+
+    <!-- Title bar -->
+    <rect x="12" y="12" width="936" height="56" rx="10" fill="#121a28" stroke="#243246"/>
+    <text x="24" y="35" font-family="sans-serif" font-size="15" font-weight="bold" fill="#e8f2fa">手术探针定位系统</text>
+    <!-- Mode tabs -->
+    <rect x="220" y="22" width="90" height="30" rx="6" fill="#1a2f48" stroke="#5ec8f0"/>
+    <text x="228" y="42" font-family="sans-serif" font-size="10" fill="white">穿刺训练 ⬤</text>
+    <rect x="318" y="22" width="80" height="30" rx="6" fill="#151d2a" stroke="#2a3d56"/>
+    <text x="326" y="42" font-family="sans-serif" font-size="10" fill="#64748b">姿态观察</text>
+    <!-- Status chips -->
+    <rect x="480" y="22" width="70" height="30" rx="14" fill="#152a22" stroke="#3d8f62"/>
+    <text x="492" y="42" font-family="sans-serif" font-size="9" fill="#6ee7a0">CT ✓</text>
+    <rect x="558" y="22" width="70" height="30" rx="14" fill="#152a22" stroke="#3d8f62"/>
+    <text x="570" y="42" font-family="sans-serif" font-size="9" fill="#6ee7a0">Entry ✓</text>
+    <rect x="636" y="22" width="80" height="30" rx="14" fill="#152a22" stroke="#3d8f62"/>
+    <text x="648" y="42" font-family="sans-serif" font-size="9" fill="#6ee7a0">Target ✓</text>
+    <rect x="724" y="22" width="80" height="30" rx="14" fill="#151d2a" stroke="#2a3d56"/>
+    <text x="736" y="42" font-family="sans-serif" font-size="9" fill="#9eb2c8">IMU 已连接</text>
+    <!-- Collapse buttons -->
+    <rect x="880" y="28" width="20" height="20" rx="4" fill="#1a2535"/>
+    <text x="884" y="43" font-family="sans-serif" font-size="9" fill="#9eb2c8" text-anchor="middle">◀</text>
+    <rect x="920" y="28" width="22" height="20" rx="4" fill="#1a2535"/>
+    <text x="924" y="43" font-family="sans-serif" font-size="9" fill="#9eb2c8" text-anchor="middle">▶</text>
+
+    <!-- Workflow -->
+    <rect x="12" y="74" width="936" height="28" rx="6" fill="#0d131c"/>
+    <rect x="24" y="80" width="120" height="16" rx="4" fill="#152a22" stroke="#3d8f62"/>
+    <text x="30" y="92" font-family="sans-serif" font-size="9" fill="#6ee7a0">✓ 加载 CT</text>
+    <text x="156" y="92" font-family="sans-serif" font-size="9" fill="#4a5d72">›</text>
+    <rect x="168" y="80" width="120" height="16" rx="4" fill="#152a22" stroke="#3d8f62"/>
+    <text x="174" y="92" font-family="sans-serif" font-size="9" fill="#6ee7a0">✓ 选 Entry</text>
+    <text x="300" y="92" font-family="sans-serif" font-size="9" fill="#4a5d72">›</text>
+    <rect x="312" y="80" width="120" height="16" rx="4" fill="#152a22" stroke="#3d8f62"/>
+    <text x="318" y="92" font-family="sans-serif" font-size="9" fill="#6ee7a0">✓ 连接 IMU</text>
+    <text x="444" y="92" font-family="sans-serif" font-size="9" fill="#4a5d72">›</text>
+    <rect x="456" y="80" width="120" height="16" rx="4" fill="#1a2f48" stroke="#5ec8f0"/>
+    <text x="462" y="92" font-family="sans-serif" font-size="9" fill="#5ec8f0">⬤ 对准 Target</text>
+
+    <!-- LEFT PANEL -->
+    <rect x="12" y="108" width="260" height="418" rx="10" fill="#101722" stroke="#243246"/>
+    <text x="24" y="132" font-family="sans-serif" font-size="12" fill="#5ec8f0" font-weight="bold">准备</text>
+
+    <!-- Left Block 1: CT (active) -->
+    <rect x="20" y="142" width="244" height="80" rx="8" fill="#151d2a" stroke="#5ec8f0" stroke-width="1.5"/>
+    <rect x="20" y="142" width="3" height="80" rx="2" fill="#5ec8f0"/>
+    <text x="34" y="164" font-family="sans-serif" font-size="11" fill="#5ec8f0" font-weight="bold">影像 · DICOM   ▾</text>
+    <rect x="34" y="176" width="216" height="24" rx="5" fill="#1a8f5c"/>
+    <text x="44" y="193" font-family="sans-serif" font-size="10" fill="white">选择 DICOM 文件夹</text>
+    <text x="34" y="214" font-family="sans-serif" font-size="9" fill="#6ee7a0">✓ 已加载: 524,288 顶点</text>
+
+    <!-- Left Block 2: Device (collapsed) -->
+    <rect x="20" y="228" width="244" height="40" rx="8" fill="#151d2a" stroke="#2a3d56"/>
+    <text x="34" y="254" font-family="sans-serif" font-size="11" fill="#c8d8e8">设备 · 串口   ▴</text>
+
+    <!-- Left Block 3: IMU (collapsed) -->
+    <rect x="20" y="274" width="244" height="40" rx="8" fill="#151d2a" stroke="#2a3d56"/>
+    <text x="34" y="300" font-family="sans-serif" font-size="11" fill="#c8d8e8">遥测 · IMU   ▴</text>
+
+    <!-- CENTER: 3D View -->
+    <rect x="280" y="108" width="420" height="418" rx="10" fill="#06080c" stroke="#2a3d56"/>
+    <ellipse cx="490" cy="300" rx="140" ry="120" fill="#1e293b" opacity="0.5"/>
+    <text x="490" y="310" font-family="sans-serif" font-size="12" fill="#475569" text-anchor="middle">3D 视口</text>
+    <!-- Floating HUD overlay in 3D corner -->
+    <rect x="600" y="118" width="88" height="36" rx="6" fill="rgba(14,20,30,0.85)" stroke="#2a3d56"/>
+    <text x="610" y="134" font-family="monospace" font-size="16" font-weight="bold" fill="#f0c14a">8.7°</text>
+    <text x="664" y="134" font-family="sans-serif" font-size="9" fill="#94a3b8">偏差</text>
+    <text x="610" y="148" font-family="sans-serif" font-size="8" fill="#64748b">↑ 向上倾斜</text>
+
+    <!-- RIGHT PANEL -->
+    <rect x="708" y="108" width="240" height="418" rx="10" fill="#101722" stroke="#243246"/>
+    <text x="720" y="132" font-family="sans-serif" font-size="12" fill="#5ec8f0" font-weight="bold">训练</text>
+
+    <!-- Right Step 1 -->
+    <rect x="716" y="142" width="224" height="90" rx="6" fill="#121a26" stroke="#2a3d56"/>
+    <text x="728" y="162" font-family="sans-serif" font-size="10" fill="#5ec8f0" font-weight="bold">步骤 ① 穿刺计划</text>
+    <text x="728" y="178" font-family="sans-serif" font-size="9" fill="#94a3b8">Entry:</text>
+    <text x="770" y="178" font-family="monospace" font-size="9" fill="#9ecae8">12.3, 45.6, -8.2</text>
+    <text x="728" y="194" font-family="sans-serif" font-size="9" fill="#94a3b8">Target:</text>
+    <text x="770" y="194" font-family="monospace" font-size="9" fill="#ff7b7b">-8.5, 72.0, 22.1</text>
+    <text x="728" y="210" font-family="sans-serif" font-size="9" fill="#94a3b8">深度:</text>
+    <text x="762" y="210" font-family="monospace" font-size="9" fill="#9ecae8">65.0 mm</text>
+    <rect x="728" y="220" width="90" height="16" rx="3" fill="#1a2535" stroke="#2a3d56"/>
+    <text x="736" y="232" font-family="sans-serif" font-size="7" fill="#9eb2c8">重新选择</text>
+
+    <!-- Right Step 2: Compass (LARGER) -->
+    <rect x="716" y="240" width="224" height="156" rx="6" fill="#121a26" stroke="#2a3d56"/>
+    <text x="728" y="260" font-family="sans-serif" font-size="10" fill="#5ec8f0" font-weight="bold">步骤 ② 对准 Target</text>
+    <circle cx="828" cy="328" r="48" fill="#0e141e" stroke="#3d5578" stroke-width="1.5"/>
+    <line x1="790" y1="328" x2="866" y2="328" stroke="#2a3d56"/>
+    <line x1="828" y1="290" x2="828" y2="366" stroke="#2a3d56"/>
+    <circle cx="828" cy="328" r="2.5" fill="#5ec8f0"/>
+    <circle cx="845" cy="310" r="7" fill="#ef4444"/>
+    <line x1="828" y1="328" x2="845" y2="310" stroke="#ef4444" stroke-width="2"/>
+    <rect x="740" y="380" width="180" height="18" rx="5" fill="#1a6b45" stroke="#6ee7a0"/>
+    <text x="830" y="393" font-family="sans-serif" font-size="10" fill="#e8fff2" text-anchor="middle">★ 对准，可进针 · 2.3°</text>
+
+    <!-- Right Step 3: Progress -->
+    <rect x="716" y="402" width="224" height="60" rx="6" fill="#121a26" stroke="#2a3d56"/>
+    <text x="728" y="422" font-family="sans-serif" font-size="10" fill="#5ec8f0" font-weight="bold">步骤 ③ 进针进度</text>
+    <rect x="728" y="432" width="200" height="10" rx="5" fill="#0c121c"/>
+    <rect x="728" y="432" width="100" height="10" rx="5" fill="#10b981"/>
+    <text x="728" y="454" font-family="sans-serif" font-size="8" fill="#94a3b8">32.5 / 65.0 mm (50%)</text>
+    <text x="880" y="454" font-family="sans-serif" font-size="8" fill="#64748b">剩余 32.5mm</text>
+  </svg>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- QUICK REFERENCE -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="num">7</span> 问题速查表</h2>
+
+  <table>
+    <tr>
+      <th style="width:40px">#</th>
+      <th style="width:160px">问题</th>
+      <th style="width:60px">优先级</th>
+      <th style="width:100px">类别</th>
+      <th>涉及文件</th>
+      <th style="width:80px">预计改动量</th>
+    </tr>
+    <tr>
+      <td>1.1</td>
+      <td>右栏编号混乱</td>
+      <td><span class="badge warn">P1</span></td>
+      <td>信息架构</td>
+      <td><code>panels.py:712</code>, <code>main_window.py:294-319</code></td>
+      <td>中</td>
+    </tr>
+    <tr>
+      <td>1.2</td>
+      <td>模式切换位置</td>
+      <td><span class="badge warn">P1</span></td>
+      <td>信息架构</td>
+      <td><code>panels.py:366-373</code>, <code>main_window.py:197-215</code></td>
+      <td>中</td>
+    </tr>
+    <tr>
+      <td>1.3</td>
+      <td>罗盘信息密度</td>
+      <td><span class="badge">P3</span></td>
+      <td>信息架构</td>
+      <td><code>panels.py:959-1077</code></td>
+      <td>小</td>
+    </tr>
+    <tr>
+      <td>1.4</td>
+      <td>全局状态摘要</td>
+      <td><span class="badge ok">P0</span></td>
+      <td>信息架构</td>
+      <td><code>main_window.py:197-215</code>, <code>stylesheet.qss</code></td>
+      <td>小</td>
+    </tr>
+    <tr>
+      <td>2.1</td>
+      <td>弹窗打断流程</td>
+      <td><span class="badge danger">P0</span></td>
+      <td>交互流程</td>
+      <td><code>main_window.py</code> (多处 QMessageBox)</td>
+      <td>中</td>
+    </tr>
+    <tr>
+      <td>2.2</td>
+      <td>3D 选点引导</td>
+      <td><span class="badge">P2</span></td>
+      <td>交互流程</td>
+      <td><code>gl_widget.py:17-36</code>, <code>puncture_point_selector.py</code></td>
+      <td>大</td>
+    </tr>
+    <tr>
+      <td>2.3</td>
+      <td>CT 硬编码路径</td>
+      <td><span class="badge danger">P0</span></td>
+      <td>交互流程</td>
+      <td><code>panels.py:551-558</code></td>
+      <td>小</td>
+    </tr>
+    <tr>
+      <td>3.1</td>
+      <td>偏差角过小</td>
+      <td><span class="badge warn">P1</span></td>
+      <td>视觉层级</td>
+      <td><code>panels.py:1070-1077</code>, <code>alignment_hud.py</code></td>
+      <td>中</td>
+    </tr>
+    <tr>
+      <td>3.2</td>
+      <td>左栏焦点引导</td>
+      <td><span class="badge">P2</span></td>
+      <td>视觉层级</td>
+      <td><code>main_window.py:230-254</code>, <code>stylesheet.qss</code></td>
+      <td>小</td>
+    </tr>
+    <tr>
+      <td>3.3</td>
+      <td>按钮语义</td>
+      <td><span class="badge ok">P0</span></td>
+      <td>视觉层级</td>
+      <td><code>panels.py:651</code>, <code>simulation_panel.py:86</code></td>
+      <td>小</td>
+    </tr>
+    <tr>
+      <td>4.1</td>
+      <td>侧栏不可折叠</td>
+      <td><span class="badge">P2</span></td>
+      <td>布局</td>
+      <td><code>main_window.py:190-191</code></td>
+      <td>中</td>
+    </tr>
+    <tr>
+      <td>4.2</td>
+      <td>窗口最小尺寸</td>
+      <td><span class="badge">P3</span></td>
+      <td>布局</td>
+      <td><code>main_window.py:374-375</code></td>
+      <td>小</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- FOOTER -->
+<!-- ════════════════════════════════════════════════════ -->
+<div style="text-align:center; color:#94a3b8; font-size:12px; padding: 32px 0 16px;">
+  UI Designer Review · 2026-07-10 · 手术探针定位系统 v0.3 (无配准版)
+</div>
+
+</div>
+</body>
+</html>

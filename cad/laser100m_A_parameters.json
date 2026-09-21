@@ -1,0 +1,16 @@
+{
+  "revision": "A1-layout-fit",
+  "units": "mm",
+  "housing": {"length": 100.0, "width": 54.0, "height": 60.0, "wall": 2.0, "corner_radius": 4.0, "seam_z": 8.0},
+  "needle": {"diameter": 4.0, "exposed_length": 200.0, "insertion": 12.0, "socket_diameter": 4.2, "axis_z": 4.0},
+  "laser_reference": {"length": 46.47, "width": 37.0, "height": 24.60, "front_x": 30.0, "bottom_z": -26.0},
+  "imu_reference": {"length": 42.0, "width": 30.0, "height": 16.0, "pcb_thickness_assumed": 1.6, "front_x": 32.0, "bottom_z": 10.0},
+  "fit": {"sensor_side_gap": 0.3, "shell_tab_gap": 0.25, "coupon_holes": [4.1, 4.2, 4.3]},
+  "limitations": [
+    "Laser is a conservative box reconstructed from the supplied 2D dimensions, not a factory model.",
+    "IMU long edge is placed axially for this layout; board outline is known but axis and connector orientation remain to be checked.",
+    "IMU PCB thickness and raised electronics shape are approximations. Retaining hooks require a physical edge-clearance trial.",
+    "Cable openings are clearance allowances, not measured connector geometry.",
+    "No 80 mm near-range performance or physical assembly fit is certified."
+  ]
+}

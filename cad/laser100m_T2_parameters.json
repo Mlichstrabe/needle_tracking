@@ -1,0 +1,85 @@
+{
+  "revision": "T2-tapered-needle-200mm",
+  "units": "mm",
+  "housing": {
+    "length": 58.0,
+    "width": 44.0,
+    "bottom_z": -27.0,
+    "shoulder_z": 9.6,
+    "top_z": 20.0,
+    "wall": 1.6,
+    "corner_radius": 3.0,
+    "seam_z": 5.5,
+    "seam_clearance": 0.15
+  },
+  "crown": {
+    "base_x": [
+      17.0,
+      50.0
+    ],
+    "base_width": 32.0,
+    "base_z": 8.0,
+    "top_x": [
+      20.0,
+      47.0
+    ],
+    "top_width": 26.0,
+    "top_z": 20.0,
+    "radius": 2.5
+  },
+  "needle": {
+    "diameter": 4.0,
+    "exposed_length": 200.0,
+    "insertion": 12.0,
+    "socket_diameter": 4.2,
+    "socket_radius": 3.6,
+    "exit_x": -3.0,
+    "axis_z": 4.2,
+    "profile": "rear_100mm_cylinder_front_100mm_taper_rounded_R0.4",
+    "reference_file": "C:/Users/Lu/Desktop/acupuncter_needle.stl"
+  },
+  "laser_reference": {
+    "length": 46.47,
+    "width": 37.0,
+    "height": 24.6,
+    "front_x": 4.0,
+    "bottom_z": -25.1
+  },
+  "imu_reference": {
+    "length": 42.0,
+    "width": 30.0,
+    "height": 16.0,
+    "pcb_thickness_assumed": 1.6,
+    "front_x": 12.0,
+    "bottom_z": 1.8,
+    "body_x_offsets": [
+      10.0,
+      32.0
+    ],
+    "body_width_assumed": 20.0
+  },
+  "optical_opening": {
+    "width": 31.0,
+    "height": 20.4,
+    "center_y": -3.0,
+    "center_z": -9.7,
+    "radius": 3.0,
+    "type": "shared_clearance_opening_not_two_unverified_precision_holes"
+  },
+  "fit": {
+    "sensor_side_gap": 0.3,
+    "coupon_holes": [
+      4.1,
+      4.2,
+      4.3
+    ],
+    "nominal_wall": 1.6
+  },
+  "limitations": [
+    "Sensor outlines come from existing records; IMU raised-body position, PCB thickness and electronic edge clearances are approximate.",
+    "The shell crown fits the approximate central IMU raised body, not a uniformly full-height 42 x 30 x 16 mm block.",
+    "The shared optical opening is a design allowance. Cosmetic recesses in the laser reference are not measured lens geometry or optical-field verification.",
+    "The laser front is 7 mm behind the rod exit. Under the perpendicular-target assumption the 150 mm stroke ends at 57 mm geometric distance; hardware near-range validity is unverified.",
+    "Clip flexibility, retention strength, actual connector bodies and cable strain relief need physical fitting. This is not a certified print-ready assembly."
+  ]
+}

@@ -29,6 +29,15 @@ data/jetarm_marker/tracking/
 # IMU 校准日志
 imu_calibration_logs/
 
+# STP-23L 测距模块独立测试日志
+rangefinder_test_logs/
+
+# 本机运行状态与生成文件
+config/dicom_last_path.json
+.superpowers/
+output/
+tmp/
+
 # 媒体与表格数据
 *.csv
 *.mp4
