@@ -103,9 +103,9 @@ class AlignmentHudPanel(QFrame):
             tone = "idle"
         else:
             self.angle_label.setText(f"{float(angle_deg):.1f}°")
-            if angle_deg < 3.0:
+            if angle_deg <= 5.0:
                 tone = "ok"
-            elif angle_deg < 10.0:
+            elif angle_deg <= 8.0:
                 tone = "warn"
             else:
                 tone = "danger"

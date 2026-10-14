@@ -17,8 +17,10 @@ class PunctureDepthController:
     RANGE_INVALID = "RANGE_INVALID"
     COMPLETE = "COMPLETE"
 
-    ALIGN_THRESHOLD_DEG = 3.0
-    PAUSE_THRESHOLD_DEG = 4.0
+    # 训练模式的姿态容差：进入进针需要更稳定的 5° 内姿态，
+    # 已经进针后只有超过 8° 才暂停，避免轻微抖动频繁打断。
+    ALIGN_THRESHOLD_DEG = 5.0
+    PAUSE_THRESHOLD_DEG = 8.0
     ALIGN_HOLD_S = 0.30
     COMPLETE_VALID_SAMPLES = 3
 
@@ -244,7 +246,7 @@ class PunctureDepthController:
             else:
                 self._aligned_since = None
                 if self.state != self.ALIGNING:
-                    self._set_state(self.ALIGNING, "等待姿态进入 3° 阈值", events)
+                    self._set_state(self.ALIGNING, "等待姿态进入 5° 阈值", events)
         return events
 
     def _emit_depth(self, events):

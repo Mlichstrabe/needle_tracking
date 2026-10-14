@@ -26,6 +26,46 @@ class DicomModelLoader(QObject):
         self._voxel_threshold_high = 50_000_000
         self._voxel_threshold_mid = 14_000_000
 
+    @staticmethod
+    def validate_folder_identity(folder_path, expected):
+        """只读核验固定训练 CT 的序列身份和基本几何元数据。"""
+        import pydicom
+
+        files = DicomModelLoader()._scan_dicom_files(folder_path)
+        if len(files) != int(expected.get("expected_slice_count", len(files))):
+            return False, f"切片数不符：实际 {len(files)}，期望 {expected['expected_slice_count']}"
+
+        def read_header(path):
+            return pydicom.dcmread(path, stop_before_pixels=True)
+
+        series = set()
+        sizes = set()
+        orientations = set()
+        spacings = set()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(files))) as pool:
+            headers = pool.map(read_header, files)
+            for path, ds in zip(files, headers):
+                if not hasattr(ds, "SeriesInstanceUID"):
+                    return False, f"缺少 SeriesInstanceUID：{os.path.basename(path)}"
+                series.add(str(ds.SeriesInstanceUID))
+                sizes.add((int(ds.Rows), int(ds.Columns)))
+                if hasattr(ds, "ImageOrientationPatient"):
+                    orientations.add(tuple(round(float(v), 6) for v in ds.ImageOrientationPatient))
+                if hasattr(ds, "PixelSpacing"):
+                    spacings.add(tuple(round(float(v), 6) for v in ds.PixelSpacing))
+
+        if series != {str(expected["expected_series_instance_uid"])}:
+            return False, "SeriesInstanceUID 不符，已阻止加载"
+        if sizes != {(int(expected["expected_rows"]), int(expected["expected_columns"]))}:
+            return False, f"图像尺寸不符：{sorted(sizes)}"
+        expected_orientation = tuple(round(float(v), 6) for v in expected["expected_image_orientation_patient"])
+        if orientations != {expected_orientation}:
+            return False, "ImageOrientationPatient 不符，已阻止加载"
+        expected_spacing = tuple(round(float(v), 6) for v in expected["expected_pixel_spacing"])
+        if spacings != {expected_spacing}:
+            return False, "PixelSpacing 不符，已阻止加载"
+        return True, "固定训练 CT 身份核验通过"
+
     def load_dicom_folder(self, folder_path):
         """加载DICOM文件夹"""
         try:

@@ -51,7 +51,8 @@ class GLVisualizationWidget(QFrame):
     def _load_viewport_config(self):
         path = self._viewport_config_path()
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            # 配置文件可能由 Windows 编辑器写入 UTF-8 BOM。
+            with open(path, "r", encoding="utf-8-sig") as f:
                 cfg = json.load(f)
         except Exception as exc:
             logger.warning("GL 视角配置未加载，使用内置默认: %s", exc)
@@ -165,6 +166,7 @@ class GLVisualizationWidget(QFrame):
 
         # ====== CT头部模型 ======
         self.head_mesh = None
+        self._head_bounds = None
         self.head_model_visible = True
         self.head_model_color = (0.9, 0.9, 0.9, 0.6)
 
@@ -177,8 +179,11 @@ class GLVisualizationWidget(QFrame):
         self.view.addItem(self.axes)
 
         self.grid = gl.GLGridItem()
-        self.grid.setSize(x=400, y=400, z=1)
-        self.grid.setSpacing(x=40, y=40, z=40)
+        # 穿刺模拟也保留可辨识的空间参照网格，避免 CT/针体悬浮在纯黑背景中。
+        self.grid.setSize(x=600, y=600, z=1)
+        self.grid.setSpacing(x=25, y=25, z=25)
+        self.grid.setColor((92, 118, 145, 150))
+        self.grid.setVisible(True)
         self.view.addItem(self.grid)
         self._sync_grid_axes_transform((0.0, 0.0, 0.0))
 
@@ -282,6 +287,7 @@ class GLVisualizationWidget(QFrame):
 
         # 4. Entry-Target连线（蓝色虚线）
         self.entry_target_line = None  # 稍后创建
+        self.entry_target_extension_line = None
 
         logger.info("穿刺点标记系统已初始化")
 
@@ -566,6 +572,7 @@ class GLVisualizationWidget(QFrame):
         if len(verts) > 0:
             mn = verts.min(axis=0)
             mx = verts.max(axis=0)
+            self._head_bounds = (mn, mx)
             extent = mx - mn
             origin = np.zeros(3, dtype=float)
             self._sync_grid_axes_transform((0.0, 0.0, 0.0))
@@ -578,7 +585,21 @@ class GLVisualizationWidget(QFrame):
         if self.head_mesh is not None:
             self.view.removeItem(self.head_mesh)
             self.head_mesh = None
+        self._head_bounds = None
         self.update()
+
+    def frame_training_needle(self):
+        """固定病例加载后同时容纳 CT 和 Entry 外侧的完整针体。"""
+        if self._head_bounds is None:
+            return
+        tip, tail = self._needle_endpoints()
+        lower = np.minimum.reduce((self._head_bounds[0], tip, tail))
+        upper = np.maximum.reduce((self._head_bounds[1], tip, tail))
+        center = (lower + upper) * 0.5
+        radius = float(np.linalg.norm(upper - lower) * 0.5)
+        distance = float(np.clip(radius * 2.4, 420.0, 750.0))
+        self.view.opts["center"] = QVector3D(*[float(v) for v in center])
+        self.view.setCameraPosition(distance=distance)
 
     def set_head_model_visible(self, visible):
         """控制头部模型显示/隐藏"""
@@ -608,6 +629,9 @@ class GLVisualizationWidget(QFrame):
         if self.entry_target_line is not None:
             self.view.removeItem(self.entry_target_line)
             self.entry_target_line = None
+        if self.entry_target_extension_line is not None:
+            self.view.removeItem(self.entry_target_extension_line)
+            self.entry_target_extension_line = None
 
         logger.debug("Entry 标记已清除")
 
@@ -642,6 +666,9 @@ class GLVisualizationWidget(QFrame):
         if self.entry_target_line is not None:
             self.view.removeItem(self.entry_target_line)
             self.entry_target_line = None
+        if self.entry_target_extension_line is not None:
+            self.view.removeItem(self.entry_target_extension_line)
+            self.entry_target_extension_line = None
 
         if entry_point is None or target_point is None:
             return
@@ -650,22 +677,10 @@ class GLVisualizationWidget(QFrame):
         entry = np.array(entry_point, dtype=float)
         target = np.array(target_point, dtype=float)
 
-        #  计算从Target到Entry的方向（反向）
-        direction = entry - target  # 注意：这里是 entry - target，而不是 target - entry
-        distance = np.linalg.norm(direction)
-        direction = direction / distance  # 归一化
-
-        #  从Target点开始，向Entry方向延伸
-        extension_length = 200.0  # 延长200mm
-
-        # 起点：Target点
-        start_point = target
-
-        # 终点：Target + 方向 * (原始距离 + 延长长度)
-        end_point = target + direction * (distance + extension_length)
-
-        # 创建虚线数据（从Target到延长后的终点）
-        dashed_line = self._generate_dashed_line(start_point, end_point, 10.0, 5.0)
+        distance = float(np.linalg.norm(entry - target))
+        if distance < 1e-9:
+            return
+        dashed_line = self._generate_dashed_line(entry, target, 10.0, 5.0)
 
         # 创建虚线
         self.entry_target_line = gl.GLLinePlotItem(
@@ -678,7 +693,22 @@ class GLVisualizationWidget(QFrame):
 
         self.view.addItem(self.entry_target_line)
 
-        logger.debug("Entry-Target连线已显示（反向延长），距离=%.1f mm", distance)
+        # 恢复 Entry 外侧的反向延长线，供对准时观察完整轴线。单独绘制且
+        # 使用更细、更暗的线；针杆保持白色并位于视觉主层。延长 300 mm，
+        # 让它在 200 mm 针体末端之外仍有可见段。
+        axis = (entry - target) / distance
+        extension_end = entry + axis * 300.0
+        extension = self._generate_dashed_line(entry, extension_end, 8.0, 8.0)
+        self.entry_target_extension_line = gl.GLLinePlotItem(
+            pos=extension,
+            color=(0.15, 0.42, 0.75, 0.45),
+            width=2.0,
+            antialias=True,
+            mode='lines'
+        )
+        self.view.addItem(self.entry_target_extension_line)
+
+        logger.debug("Entry-Target连线已显示（含反向延长），距离=%.1f mm", distance)
 
     def set_needle_tip_position(self, position):
         """设置针尖固定位置（初始化+穿刺模式）"""

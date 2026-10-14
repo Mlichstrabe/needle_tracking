@@ -292,7 +292,7 @@ class DeviceManager(QObject):
         if cache["quaternion"] is None and cache["euler"] is None:
             return
 
-        data: Dict[str, Optional[np.ndarray]] = {}
+        data: Dict[str, Any] = {}
         for k, v in cache.items():
             if v is None:
                 data[k] = None
@@ -301,6 +301,8 @@ class DeviceManager(QObject):
             else:
                 data[k] = v.copy()
 
+        # 发送线程时间戳用于区分传感器跳变与 UI 主线程积压。
+        data["device_emit_ns"] = time.monotonic_ns()
         self.data_received.emit(data)
 
     # ═══════════════════════════════════════════════════════

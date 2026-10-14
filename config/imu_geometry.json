@@ -29,7 +29,7 @@
   },
   "smoothing": {
     "enabled": false,
-    "alpha": 0.25
+    "alpha": 0.45
   },
   "notes": "针轴方向依次应用场景 Z 轴 240°、X 轴 180°，再镜像场景 Y 分量以修正水平转向。"
 }

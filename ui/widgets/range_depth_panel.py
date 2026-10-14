@@ -28,6 +28,10 @@ from ui.widgets.ui_helpers import (
 
 
 class RangeDepthPanel(QFrame):
+    # 设备偶尔会有较长测量间隔。短时没有新帧时冻结深度即可，
+    # 不清除用户已经记录的零点；恢复后下一条有效帧自动继续。
+    STALE_TIMEOUT_S = 2.0
+
     sensor_state_changed = pyqtSignal(str, str)
     range_sample = pyqtSignal(object, object, object, float)
     range_validity_changed = pyqtSignal(bool, str)
@@ -49,6 +53,7 @@ class RangeDepthPanel(QFrame):
         self._data_valid = False
         self.lost = False
         self._sensor_state = 'pending'
+        self._transport_connected = False
         self.setObjectName('RangeDepthCard')
         apply_panel_chrome(self)
         # This card is in the fixed real-time area of the right sidebar.  Its
@@ -194,6 +199,7 @@ class RangeDepthPanel(QFrame):
         self.events = queue.Queue()
         self.stop_event = threading.Event()
         self._set_baseline(None)
+        self._transport_connected = False
         self.latest = self.received = None
         self.filtered_distance = None
         self.history.clear()
@@ -217,43 +223,53 @@ class RangeDepthPanel(QFrame):
 
     def stop(self):
         self.stop_event.set()
+        self._transport_connected = False
         self.distance.setText('— mm')
         self.filtered.setText('— mm')
-        self.invalidate('已停止，等待串口释放', clear_baseline=True)
+        self.invalidate('已停止，等待串口释放', clear_baseline=True,
+                        reset_measurement=True)
         self.stop_button.setEnabled(False)
         self._set_sensor_state('pending', '未连接')
 
-    def invalidate(self, message, clear_baseline=False):
-        self.latest = None
-        self.filtered_distance = None
-        self.history.clear()
-        self._median_history.clear()
-        self._filtered_history.clear()
-        self.depth.setText('— mm')
-        self.filtered.setText('— mm')
-        self.zero.setEnabled(False)
+    def invalidate(self, message, clear_baseline=False, reset_measurement=False):
+        """暂停深度应用。
+
+        瞬时坏帧只使当前数据无效，保留零点和最后可信滤波值；只有停止
+        或采集线程结束时才清空测量显示，避免界面在坏帧/好帧之间闪烁。
+        """
+        if reset_measurement:
+            self.latest = None
+            self.filtered_distance = None
+            self.history.clear()
+            self._median_history.clear()
+            self._filtered_history.clear()
+            self.depth.setText('— mm')
+            self.filtered.setText('— mm')
+        if self.baseline is None:
+            self.zero.setEnabled(False)
         self.status.setText(message)
         self._set_data_valid(False, message)
         if clear_baseline:
             self._set_baseline(None)
 
     def accept_sample(self, raw, status, received):
-        if self.received is not None and received - self.received > .5:
+        if self.received is not None and received - self.received > self.STALE_TIMEOUT_S:
+            # 长间隔后重新建立滤波窗口，但不动用户已经记录的零点。
             self.history.clear()
             self._median_history.clear()
             self._filtered_history.clear()
-            self._set_baseline(None)
-            self.reference.setText('需重新记录')
+            self.filtered_distance = None
         self.received = received
         if status != 'ok' or raw is None or not math.isfinite(raw) or not 0 < raw <= 500:
-            self.distance.setText('无效')
-            self.invalidate('测距无效；恢复后请重新记录零点', True)
-            self._set_sensor_state('error', '数据异常')
+            if raw is not None and math.isfinite(raw):
+                self.distance.setText(f'{raw:.1f} mm')
+            else:
+                self.distance.setText('无效')
+            self.invalidate('测距暂失；深度暂停，零点保留')
             return
-        if self.latest is not None and abs(raw - self.latest) > 30:
-            self.invalidate('距离突变；确认靶面后重新记录零点', True)
-            self._set_sensor_state('error', '距离突变')
-            return
+
+        # 不再因相邻帧大跳变反复进入“异常/重新记录”状态。3 点中值和
+        # EMA 继续用于控制输入；超出训练量程的值已在上面被拦截。
         self.latest = raw
         self.history.append((received, raw))
         self._median_history.append(float(raw))
@@ -265,13 +281,10 @@ class RangeDepthPanel(QFrame):
         self._filtered_history.append(self.filtered_distance)
         self.distance.setText(f'{raw:.1f} mm')
         self.filtered.setText(f'{self.filtered_distance:.1f} mm')
-        stable = (
-            len(self.history) == 10
-            and self.history[-1][0] - self.history[0][0] >= .5
-            and max(v for _, v in self.history) - min(v for _, v in self.history) <= 5
-        )
-        self.zero.setEnabled(stable)
-        self._set_sensor_state('done', '信号正常')
+        # 首个新鲜有效读数即可由用户主动记录零点，不再强制等待 10 帧。
+        self.zero.setEnabled(True)
+        if self._sensor_state == 'active':
+            self._set_sensor_state('done', '已连接')
         self._set_data_valid(True, '')
         if self.baseline is not None:
             measured_depth = self.baseline - self.filtered_distance
@@ -279,12 +292,13 @@ class RangeDepthPanel(QFrame):
             self.status.setText('实时更新 · 滤波距离差分')
         else:
             measured_depth = None
-            self.status.setText('距离稳定，可记录零点' if stable else '保持静止，等待稳定读数')
+            self.status.setText('已有有效读数，可直接记录零点')
         age_s = max(0.0, time.monotonic() - received)
         self.range_sample.emit(raw, self.filtered_distance, measured_depth, age_s)
 
     def set_zero(self):
-        if not self.zero.isEnabled() or self.received is None or time.monotonic() - self.received > .5:
+        if (not self.zero.isEnabled() or self.received is None
+                or time.monotonic() - self.received > self.STALE_TIMEOUT_S):
             return
         if self.filtered_distance is None or not self._filtered_history:
             return
@@ -308,20 +322,25 @@ class RangeDepthPanel(QFrame):
             except queue.Empty:
                 break
             if event[0] == 'finished':
-                self.invalidate('采集结束；记录：' + event[1], True)
+                self._transport_connected = False
+                reason = event[2] if len(event) > 2 and event[2] else '采集结束'
+                self.invalidate(reason + '；记录：' + event[1],
+                                clear_baseline=True, reset_measurement=True)
                 self.ports.setEnabled(True)
                 self.connect_button.setEnabled(True)
                 self.stop_button.setEnabled(False)
                 self._set_sensor_state('pending', '未连接')
             elif not self.stop_event.is_set():
-                if event[0] == 'frame':
+                if event[0] == 'connected':
+                    self._transport_connected = True
+                    self.status.setText(event[1])
+                elif event[0] == 'frame':
                     self.accept_sample(event[3], event[5], event[2])
                 elif event[0] in ('status', 'config_text'):
                     self.status.setText(event[1])
-        if self.latest is not None and self.received is not None and time.monotonic() - self.received > .5:
+        if self.latest is not None and self.received is not None and time.monotonic() - self.received > self.STALE_TIMEOUT_S:
             self.distance.setText('超时')
-            self.invalidate('超过 0.5 秒无新数据，请重新记录零点', True)
-            self._set_sensor_state('error', '数据超时')
+            self.invalidate('测距暂时无新帧；深度暂停，零点保留')
 
     def shutdown(self):
         self.stop()

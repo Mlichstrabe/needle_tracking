@@ -30,6 +30,7 @@ os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
 from ui.main_window import MainWindow
+from ui.mode_selector import ModeSelector
 
 
 def main():
@@ -37,19 +38,43 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     base_font = app.font()
-    # 与 QSS 统一使用像素字号，避免 Windows 高 DPI 下 pt / px 混用失衡。
-    base_font.setPixelSize(13)
-    app.setFont(base_font)
 
     style_path = os.path.join(_ROOT, "styles", "stylesheet.qss")
     if os.path.isfile(style_path):
         with open(style_path, encoding="utf-8") as f:
             app.setStyleSheet(f.read())
 
-    window = MainWindow()
-    window.show()
-    window.raise_()
-    window.activateWindow()
+    # 与 QSS 统一使用像素字号，避免 Windows 高 DPI 下 pt / px 混用失衡。
+    base_font.setPixelSize(13)
+    app.setFont(base_font)
+    selector = ModeSelector()
+    window_holder = {"window": None}
+
+    def open_mode(mode):
+        old_window = window_holder.get("window")
+        if old_window is not None:
+            old_window.shutdown_for_mode_switch()
+            old_window.deleteLater()
+        window = MainWindow(operation_mode=mode)
+        window_holder["window"] = window
+        window.return_to_mode_selector.connect(show_selector)
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def show_selector():
+        window = window_holder.get("window")
+        if window is not None:
+            window.hide()
+            window.shutdown_for_mode_switch()
+        selector.show()
+        selector.raise_()
+        selector.activateWindow()
+
+    selector.mode_selected.connect(open_mode)
+    selector.show()
+    selector.raise_()
+    selector.activateWindow()
 
     sys.exit(app.exec_())
 

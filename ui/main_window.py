@@ -3,9 +3,12 @@ import logging
 import os
 import time
 import traceback
+import json
+from pathlib import Path
 
 import numpy as np
-from PyQt5.QtCore import Qt, QTimer, QThread
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt5.QtGui import QVector3D
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -19,9 +22,11 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QScrollArea,
     QPushButton,
+    QShortcut,
 )
 
 from core.device_manager import DeviceManager
+from core.imu_diagnostic_recorder import ImuDiagnosticRecorder
 from core.dicom_loader import DicomModelLoader
 from core.imu_geometry_config import apply_kinematics, load_config, save_config
 from core.puncture_depth_controller import PunctureDepthController
@@ -54,8 +59,11 @@ from ui.widgets.puncture_point_selector import PuncturePointSelector
 from ui.widgets.simulation_panel import SimulationPanel
 from ui.widgets.workflow_stepper import WorkflowStepBar
 from ui.widgets.alignment_hud import AlignmentHudPanel
-from ui.widgets.prep_sidebar import PrepSidebar
+from ui.widgets.prep_sidebar import PrepSidebar, PrepSection
 from ui.widgets.ui_helpers import configure_side_scroll
+from ui.widgets.observation_panel import ObservationPanel
+from core.observation_translation_controller import ObservationTranslationController
+from core.serial_auto_connector import SerialAutoConnector
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +96,17 @@ def default_intracerebral_hemorrhage_target_mm(bbox):
 class MainWindow(QMainWindow):
     """主窗口"""
 
-    def __init__(self):
+    return_to_mode_selector = pyqtSignal()
+
+    def __init__(self, operation_mode=DeviceConnectionPanel.MODE_PUNCTURE_TRAINING):
         super().__init__()
-        self.setWindowTitle("手术探针定位系统 - 穿刺训练模式")
+        self._operation_mode = operation_mode
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setWindowTitle(
+            "手术探针定位系统 - 姿态观察模式"
+            if operation_mode == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE
+            else "手术探针定位系统 - 穿刺训练模式"
+        )
 
         # 几何参数需在 UI 创建前可用
         # 你当前实测：IMU 中心到针尖约 20cm
@@ -100,6 +116,10 @@ class MainWindow(QMainWindow):
 
         self._init_core_components()
         self._init_ui()
+
+        self.space_shortcut = QShortcut(Qt.Key_Space, self)
+        self.space_shortcut.setContext(Qt.WindowShortcut)
+        self.space_shortcut.activated.connect(self._on_space_pressed)
 
         self._ui_ready = False
         self._closing = False
@@ -114,7 +134,27 @@ class MainWindow(QMainWindow):
         self._ct_model_loaded = False
         self._ct_loading = False
         self.ct_loader_thread = None
-        self._operation_mode = DeviceConnectionPanel.MODE_PUNCTURE_TRAINING
+        # 姿态观察模式用于展示测距产生的沿轴位移，不要求先静止 0.3 秒，
+        # 也不因姿态小幅变化冻结位移；穿刺模式仍由独立状态机负责严格准入。
+        self.observation_controller = ObservationTranslationController(
+            require_stationary=False,
+            enforce_angle_pause=False,
+        )
+        self._imu_recorder = ImuDiagnosticRecorder(
+            Path(__file__).resolve().parents[1] / "imu_diagnostic_logs"
+        )
+        self._imu_record_timer = QTimer(self)
+        self._imu_record_timer.setSingleShot(True)
+        self._imu_record_timer.timeout.connect(
+            lambda: self._stop_imu_diagnostic_recording("120 秒自动结束")
+        )
+        self._last_gyro = None
+        self._auto_connector_thread = None
+        self._auto_connector = None
+        self._range_auto_port = None
+        self._observation_range_enabled = False
+        self._fixed_training_case = self._load_fixed_training_case()
+        self._fixed_case_active = False
 
         self._current_quaternion = [1, 0, 0, 0]
         self._current_euler = [0, 0, 0]
@@ -137,7 +177,7 @@ class MainWindow(QMainWindow):
         self.alignment_timer.setInterval(10)
         self.alignment_timer.timeout.connect(self._update_alignment)
 
-        self._ALIGN_THRESHOLD_DEG = 3.0
+        self._ALIGN_THRESHOLD_DEG = PunctureDepthController.ALIGN_THRESHOLD_DEG
         self._current_angle_error_deg = 0.0
         self._puncture_plan_depth = 0.0
         self._puncture_current_depth = 0.0
@@ -151,20 +191,159 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_steps()
         self._apply_operation_mode_ui()
         self._ui_ready = True
+        if not self._is_observe_mode():
+            QTimer.singleShot(0, self._auto_load_fixed_training_case)
+        else:
+            QTimer.singleShot(300, self._start_auto_connection)
         logger.info("✓ 主窗口初始化完成")
+
+    def _load_fixed_training_case(self):
+        path = Path(__file__).resolve().parents[1] / "config" / "fixed_training_case.json"
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("固定训练 CT 配置读取失败: %s", exc)
+            return None
+
+    def _auto_load_fixed_training_case(self):
+        if self._closing or self._is_observe_mode() or not self._fixed_training_case:
+            return
+        root = Path(__file__).resolve().parents[1]
+        folder = (root / self._fixed_training_case["relative_dicom_path"]).resolve()
+        if not folder.is_dir():
+            self.ct_panel.set_model_loaded(False, {"error": f"固定训练 CT 不存在：{folder}"})
+            self._update_header_status()
+            return
+        ok, message = DicomModelLoader.validate_folder_identity(
+            str(folder), self._fixed_training_case
+        )
+        if not ok:
+            self.ct_panel.set_model_loaded(False, {"error": message})
+            QMessageBox.critical(self, "固定训练 CT 校验失败", message)
+            return
+        self._fixed_case_active = True
+        self.puncture_panel.set_fixed_case_mode(True)
+        self._on_ct_load(str(folder))
+
+    def _start_auto_connection(self, probe_range=None):
+        if self._closing or (not self._is_observe_mode() and self.puncture_point is None):
+            return
+        if self._auto_connector_thread is not None:
+            return
+        self._auto_connector_thread = QThread(self)
+        if probe_range is None:
+            probe_range = not self._is_observe_mode() or self._observation_range_enabled
+        self._auto_connector = SerialAutoConnector(
+            probe_range=bool(probe_range), parent=None
+        )
+        self._auto_connector.moveToThread(self._auto_connector_thread)
+        self._auto_connector_thread.started.connect(self._auto_connector.run)
+        self._auto_connector.status.connect(self._on_auto_connection_status)
+        self._auto_connector.finished.connect(self._on_auto_connection_finished)
+        self._auto_connector.finished.connect(self._auto_connector_thread.quit)
+        self._auto_connector_thread.finished.connect(self._on_auto_connection_thread_finished)
+        self._auto_connector_thread.start()
+
+    def _on_auto_connection_status(self, text):
+        if self._is_observe_mode() and hasattr(self, "observation_panel"):
+            self.observation_panel.state_label.setText(text)
+
+    def _on_auto_connection_finished(self, result):
+        if self._closing:
+            return
+        connection_issues = []
+        imu_matches = result.get("imu_matches", [])
+        range_matches = result.get("range_matches", [])
+        imu_port = result.get("imu")
+        range_port = result.get("range")
+        if imu_port:
+            self._select_combo_port(self.connection_panel.port_combo, imu_port)
+            # Space 后的二次探测同时会看到已经工作的 IMU；不要重连它，
+            # 否则会在锁轴平移过程中短暂断开并清掉控制器状态。
+            if not (
+                self.device_manager.is_connected
+                and self.device_manager.port == imu_port
+            ):
+                self._on_serial_connect(imu_port, 115200, self._operation_mode)
+        elif len(imu_matches) != 1:
+            logger.warning("IMU 自动识别未得到唯一结果: %s", imu_matches)
+            connection_issues.append("IMU 自动识别失败，请展开设备详情选择端口")
+            self.connection_panel.status_text.setText(
+                "自动识别失败，请人工选择 IMU 端口"
+                if not imu_matches else "检测到多个 IMU 端口，请人工选择"
+            )
+        if range_port and self._is_observe_mode():
+            # 姿态观察在按 Space 前不启动测距线程。只记住自动识别到的端口，
+            # 进入锁轴平移后再打开它，避免启动阶段测距噪声影响零点。
+            self._range_auto_port = range_port
+            self._select_combo_port(self.range_depth_panel.ports, range_port)
+            if self._observation_range_enabled:
+                self.range_depth_panel.start()
+            else:
+                self.observation_panel.report_action("测距端口已识别，按 Space 后启用测距")
+        elif range_port:
+            self._select_combo_port(self.range_depth_panel.ports, range_port)
+            self.range_depth_panel.start()
+        elif self._is_observe_mode() and not self._observation_range_enabled:
+            # 初始观察模式只探测 IMU；测距端口在 Space 后才探测。
+            pass
+        elif len(range_matches) != 1:
+            logger.warning("测距自动识别未得到唯一结果: %s", range_matches)
+            connection_issues.append("测距自动识别失败，请展开测距详情选择端口")
+        if connection_issues and self._is_observe_mode():
+            self.observation_panel.report_action("；".join(connection_issues))
+        self._update_observation_panel()
+
+    def _on_auto_connection_thread_finished(self):
+        if self._auto_connector is not None:
+            self._auto_connector.deleteLater()
+        if self._auto_connector_thread is not None:
+            self._auto_connector_thread.deleteLater()
+        self._auto_connector = None
+        self._auto_connector_thread = None
+
+    @staticmethod
+    def _select_combo_port(combo, port):
+        index = combo.findData(port)
+        if index < 0:
+            combo.addItem(port, port)
+            index = combo.findData(port)
+        combo.setCurrentIndex(index)
 
     def _is_observe_mode(self):
         return self._operation_mode == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE
 
     def _apply_operation_mode_ui(self):
-        mode = self.connection_panel.get_operation_mode()
-        self._operation_mode = mode
+        mode = self._operation_mode
         observe = self._is_observe_mode()
         self.puncture_panel.set_observe_mode(observe, self._ct_model_loaded)
         self.sim_panel.set_training_enabled(not observe)
         connected = self.device_manager.is_connected
         self.alignment_hud.set_observe_mode(observe, connected=connected)
         self.connection_panel.set_mode_switch_enabled(not connected)
+        self.connection_panel.set_fixed_mode(mode)
+        if hasattr(self, "workflow_bar"):
+            # 两种模式都使用右侧工作区承载当前状态，隐藏旧六步条，避免重复信息。
+            self.workflow_bar.setVisible(False)
+        if hasattr(self, "observation_panel"):
+            self.observation_panel.setVisible(observe)
+        if hasattr(self, "prep_sidebar") and observe and self.prep_sidebar._sections:
+            self.prep_sidebar._sections[PrepSidebar.SEC_CT].setVisible(False)
+        elif hasattr(self, "prep_sidebar") and self.prep_sidebar._sections:
+            self.prep_sidebar._sections[PrepSidebar.SEC_CT].setVisible(True)
+        if hasattr(self, "puncture_panel"):
+            self.puncture_panel.setVisible(not observe)
+        if hasattr(self, "sim_panel"):
+            self.sim_panel.setVisible(not observe)
+        if hasattr(self, "sim_section"):
+            self.sim_section.setVisible(not observe)
+        if hasattr(self, "alignment_hud"):
+            self.alignment_hud.setVisible(not observe)
+        if hasattr(self, "live_guidance_card"):
+            self.live_guidance_card.setVisible(not observe)
+        if hasattr(self, "live_title"):
+            self.live_title.setText("姿态观察" if observe else "实时引导")
         if observe:
             self.setWindowTitle("手术探针定位系统 - 姿态观察模式")
         else:
@@ -189,14 +368,28 @@ class MainWindow(QMainWindow):
         body.setSpacing(0)
 
         self._splitter = QSplitter(Qt.Horizontal)
-        self._splitter.addWidget(self._create_left_panel())
         self._splitter.addWidget(self._create_center_panel())
-        self._splitter.addWidget(self._create_right_panel())
-        self._splitter.setStretchFactor(0, 1)
-        self._splitter.setStretchFactor(1, 3)
-        self._splitter.setStretchFactor(2, 1)
+        controls = QFrame()
+        controls.setObjectName("SidePanel")
+        controls_layout = QVBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setSpacing(8)
+        # 一个滚动区保留完整侧栏高度；实时工作区和测距放在设备详情之前。
+        prep_panel = self._create_left_panel()
+        content_layout.addWidget(self._create_right_panel())
+        content_layout.addWidget(prep_panel)
+        content_layout.addStretch()
+        configure_side_scroll(scroll, content)
+        controls_layout.addWidget(scroll)
+        self._splitter.addWidget(controls)
+        self._splitter.setStretchFactor(0, 3)
+        self._splitter.setStretchFactor(1, 2)
         self._splitter.setCollapsible(0, False)
-        self._splitter.setCollapsible(2, False)
+        self._splitter.setCollapsible(1, False)
 
         body.addWidget(self._splitter)
         root.addLayout(body, stretch=1)
@@ -213,6 +406,11 @@ class MainWindow(QMainWindow):
         title.setObjectName("AppTitle")
         top.addWidget(title)
         top.addStretch()
+
+        self.back_mode_button = QPushButton("返回模式选择")
+        self.back_mode_button.setProperty("variant", "secondary")
+        self.back_mode_button.clicked.connect(self._request_mode_selector)
+        top.addWidget(self.back_mode_button)
 
         # 4 个全局状态 Chips
         self.header_chips = {}
@@ -251,15 +449,11 @@ class MainWindow(QMainWindow):
     def _create_left_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(290)
+        panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
 
         outer = QVBoxLayout(panel)
-        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(6)
-
-        prep_title = QLabel("准备")
-        prep_title.setObjectName("SectionTitle")
-        outer.addWidget(prep_title)
 
         self.connection_panel = DeviceConnectionPanel()
         self.ct_panel = CTModelPanel()
@@ -268,55 +462,60 @@ class MainWindow(QMainWindow):
             lambda: self.device_manager.port if self.device_manager.is_connected else None
         )
 
-        scroll = QScrollArea()
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(8)
-
         self.prep_sidebar = PrepSidebar()
-        self.prep_sidebar.add_section("1  影像 · DICOM", self.ct_panel, expanded=True)
+        self.prep_sidebar.add_section("1  影像 · DICOM", self.ct_panel)
         self.prep_sidebar.add_section("2  设备 · IMU 串口", self.connection_panel)
         self.prep_sidebar.add_section("3  遥测 · IMU", self.imu_panel)
-        self.prep_sidebar.add_section("4  实时穿刺深度 · 100m 测距", self.range_depth_panel)
-        scroll_layout.addWidget(self.prep_sidebar)
-        scroll_layout.addStretch()
-
-        configure_side_scroll(scroll, scroll_content)
-
-        outer.addWidget(scroll, 1)
+        outer.addWidget(self.prep_sidebar)
         return panel
 
     def _create_right_panel(self):
         panel = QFrame()
         panel.setObjectName("SidePanel")
-        panel.setMinimumWidth(340)
+        panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
 
         outer_layout = QVBoxLayout(panel)
-        outer_layout.setContentsMargins(8, 8, 8, 8)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(7)
 
         live_title = QLabel("实时引导")
         live_title.setObjectName("SectionTitle")
+        self.live_title = live_title
         outer_layout.addWidget(live_title)
 
-        self.alignment_hud = AlignmentHudPanel()
-        outer_layout.addWidget(self.alignment_hud)
+        # 测距是实时工作区的第二个栏位，避免用户在右侧底部来回寻找深度。
+        self.range_section = PrepSection(
+            "2  实时穿刺深度 · 100m 测距",
+            self.range_depth_panel,
+            expanded=True,
+        )
+        outer_layout.addWidget(self.range_section)
 
-        scroll = QScrollArea()
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setSpacing(7)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # 角度和进针深度属于同一个实时决策区，固定病例下无需在两张卡片之间切换视线。
+        self.live_guidance_card = QFrame()
+        self.live_guidance_card.setObjectName("LiveGuidanceCard")
+        live_layout = QVBoxLayout(self.live_guidance_card)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        live_layout.setSpacing(6)
+
+        self.alignment_hud = AlignmentHudPanel()
+        live_layout.addWidget(self.alignment_hud)
+
+        self.observation_panel = ObservationPanel()
+        self.observation_panel.toggle_translation.connect(self._toggle_observation_translation)
+        self.observation_panel.zero_requested.connect(self.range_depth_panel.set_zero)
+        self.observation_panel.recording_toggled.connect(self._toggle_imu_diagnostic_recording)
+        outer_layout.addWidget(self.observation_panel)
 
         self.puncture_panel = PuncturePointPanel()
-        layout.addWidget(self.puncture_panel)
+        self.puncture_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        live_layout.addWidget(self.puncture_panel)
+        outer_layout.addWidget(self.live_guidance_card)
 
         self.sim_panel = SimulationPanel()
-        layout.addWidget(self.sim_panel)
-
-        configure_side_scroll(scroll, content)
-        outer_layout.addWidget(scroll, 1)
+        self.sim_section = PrepSection("路径引导 · 可选", self.sim_panel, expanded=False)
+        outer_layout.addWidget(self.sim_section)
+        outer_layout.addStretch()
         return panel
 
     def _refresh_workflow_steps(self):
@@ -367,19 +566,8 @@ class MainWindow(QMainWindow):
         self._sync_prep_sidebar()
 
     def _sync_prep_sidebar(self):
-        if not hasattr(self, "prep_sidebar"):
-            return
-        if self._is_observe_mode():
-            index = PrepSidebar.SEC_DEVICE if not self.device_manager.is_connected else PrepSidebar.SEC_IMU
-        elif not self._ct_model_loaded or self.puncture_point is None or self.target_point is None:
-            index = PrepSidebar.SEC_CT
-        elif not self.device_manager.is_connected:
-            index = PrepSidebar.SEC_DEVICE
-        elif self._range_state != "done" or self.puncture_controller.state == PunctureDepthController.WAITING_DEVICES:
-            index = PrepSidebar.SEC_RANGE
-        else:
-            index = PrepSidebar.SEC_IMU
-        self.prep_sidebar.set_active_section(index)
+        # 设备、影像和遥测属于详情，保持用户选择的折叠状态。
+        return
 
     def _update_header_status(self):
         def _set_chip(key, state, text=None):
@@ -438,10 +626,9 @@ class MainWindow(QMainWindow):
         frame.moveCenter(avail.center())
         self.move(frame.topLeft())
 
-        left_w = int(max(290, target_w * 0.22))
-        right_w = int(max(340, target_w * 0.26))
-        center_w = max(420, target_w - left_w - right_w)
-        self._splitter.setSizes([left_w, center_w, right_w])
+        controls_w = int(max(360, target_w * 0.35))
+        viewport_w = max(420, target_w - controls_w)
+        self._splitter.setSizes([viewport_w, controls_w])
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -518,6 +705,10 @@ class MainWindow(QMainWindow):
                 connected=False, valid=False, reason=text
             )
         self._consume_puncture_events(events)
+        self.observation_controller.set_range_status(
+            connected=state == "done", valid=False, reason=text
+        )
+        self._update_observation_panel()
         self._update_header_status()
         self._refresh_workflow_steps()
 
@@ -529,14 +720,35 @@ class MainWindow(QMainWindow):
             error=not bool(valid),
         )
         self._consume_puncture_events(events)
+        self.observation_controller.set_range_status(
+            connected=self._range_state == "done",
+            valid=bool(valid),
+            reason=reason or "测距数据无效",
+        )
+        self._update_observation_panel()
         self._refresh_workflow_steps()
 
     def _on_range_baseline_changed(self, valid, baseline_mm):
         events = self.puncture_controller.set_baseline(valid, baseline_mm)
         self._consume_puncture_events(events)
+        was_locked = self.observation_controller.locked
+        self.observation_controller.set_baseline(valid, baseline_mm)
+        if was_locked and not self.observation_controller.locked:
+            self.observation_panel.report_action("测距零点丢失，已退出平移")
+        self._update_observation_panel()
         self._refresh_workflow_steps()
 
     def _on_range_sample(self, raw_mm, filtered_mm, measured_depth_mm, age_s):
+        if self._is_observe_mode():
+            self.observation_controller.update_range(
+                measured_depth_mm, measured_depth_mm is not None
+            )
+            self.observation_controller.tick()
+            self._update_observation_panel()
+            # 测距帧不是 IMU 帧，不能等下一帧姿态数据才刷新针尖，否则界面
+            # 会显示“已应用位移”但针体仍停在原处。
+            self._refresh_3d_from_current_state()
+            return
         if measured_depth_mm is None:
             self._refresh_workflow_steps()
             return
@@ -596,8 +808,36 @@ class MainWindow(QMainWindow):
             self.device_manager.disconnect()
         self._apply_operation_mode_ui()
         self._refresh_workflow_steps()
+        if not self._is_observe_mode():
+            QTimer.singleShot(300, self._start_auto_connection)
         label = "姿态观察" if mode == DeviceConnectionPanel.MODE_NEEDLE_OBSERVE else "穿刺训练"
         print(f"[Main] 工作模式已切换: {label}")
+
+    def _request_mode_selector(self):
+        self.shutdown_for_mode_switch()
+        self.hide()
+        self.return_to_mode_selector.emit()
+
+    def shutdown_for_mode_switch(self):
+        """停止本工作页拥有的计时器和串口，供返回模式选择时复用。"""
+        if getattr(self, "_closing", False):
+            return
+        self._closing = True
+        self._stop_imu_diagnostic_recording("窗口关闭或切换模式")
+        if self.device_manager.is_connected:
+            self.device_manager.disconnect()
+        if hasattr(self, "range_depth_panel"):
+            self.range_depth_panel.shutdown()
+        if hasattr(self, "alignment_timer"):
+            self.alignment_timer.stop()
+        if hasattr(self, "panel_update_timer"):
+            self.panel_update_timer.stop()
+        self.observation_controller.reset()
+        if self._auto_connector is not None:
+            self._auto_connector.stop()
+        if self._auto_connector_thread is not None and self._auto_connector_thread.isRunning():
+            self._auto_connector_thread.quit()
+            self._auto_connector_thread.wait(2000)
 
     def _on_serial_connect(self, port, baudrate, mode):
         rp = self.range_depth_panel
@@ -632,6 +872,9 @@ class MainWindow(QMainWindow):
         self._stop_alignment_monitoring()
 
     def _on_connection_changed(self, connected):
+        if not connected:
+            self._stop_imu_diagnostic_recording("IMU 断开")
+            self._imu_recorder.clear_buffer()
         self.connection_panel.set_connected(connected)
         self.connection_panel.set_mode_switch_enabled(not connected)
         self.imu_panel.set_status(connected, self._display_fps if connected else 0)
@@ -639,6 +882,11 @@ class MainWindow(QMainWindow):
             self._display_fps = 0
         events = self.puncture_controller.set_imu_connected(connected)
         self._consume_puncture_events(events)
+        was_locked = self.observation_controller.locked
+        self.observation_controller.set_imu_connected(connected)
+        if was_locked and not connected:
+            self.observation_panel.report_action("IMU 已断开，已退出平移")
+        self._update_observation_panel()
         self._apply_operation_mode_ui()
         self._update_header_status()
         self._refresh_workflow_steps()
@@ -646,10 +894,14 @@ class MainWindow(QMainWindow):
 
     def _on_device_error(self, error_msg):
         print(f"✗ 设备错误: {error_msg}")
+        self._stop_imu_diagnostic_recording("IMU 连接错误")
         events = self.puncture_controller.set_imu_connected(False)
         self._consume_puncture_events(events)
+        self.observation_controller.set_imu_connected(False)
+        self._update_observation_panel()
 
     def _on_device_data(self, data):
+        ui_receive_ns = time.monotonic_ns()
         try:
             quaternion = data.get("quaternion")
             euler = data.get("euler")
@@ -660,11 +912,25 @@ class MainWindow(QMainWindow):
             self._current_quaternion = list(quaternion)
             self._current_euler = list(euler)
 
+            gyro = data.get("gyro")
+            if gyro is not None:
+                self._last_gyro = np.asarray(gyro, dtype=float)
+                calibrated = self.device_manager.get_gyro_bias() is not None
+                calibrated_gyro = self.device_manager.get_calibrated_gyro(self._last_gyro)
+                self.observation_controller.update_gyro(
+                    calibrated_gyro, calibrated=calibrated
+                )
+
             self._update_needle_direction_fast(quaternion)
+            self.observation_controller.update_axis(self._needle_direction)
+            self.observation_controller.tick()
             imu_pos, tip_pos = self._calculate_positions_fast(quaternion)
             self._cached_imu_pos = imu_pos
             self._cached_tip_pos = tip_pos
             self.gl_widget.update_data(imu_pos, tip_pos)
+            self._update_observation_panel()
+            if self._is_observe_mode():
+                self._capture_imu_diagnostic_sample(data, ui_receive_ns)
 
             self._data_frame_count += 1
             now = time.perf_counter()
@@ -677,10 +943,172 @@ class MainWindow(QMainWindow):
             print(f"✗ 数据处理错误: {e}")
             traceback.print_exc()
 
+    def _capture_imu_diagnostic_sample(self, data, ui_receive_ns):
+        """在正常绘制后记录传感器输入与实际显示位置。"""
+        def vec(key, count):
+            value = data.get(key)
+            if value is None:
+                return [None] * count
+            arr = np.asarray(value, dtype=float).reshape(-1)
+            return [float(arr[i]) if i < arr.size else None for i in range(count)]
+
+        device_emit_ns = int(data.get("device_emit_ns", ui_receive_ns))
+        ui_done_ns = time.monotonic_ns()
+        q = vec("quaternion", 4)
+        used_q = np.asarray(self._smooth_quat, dtype=float).reshape(4)
+        gyro = vec("gyro", 3)
+        acc = vec("acc", 3)
+        euler = vec("euler", 3)
+        axis = np.asarray(self.gl_widget._needle_direction, dtype=float).reshape(3)
+        tip = np.asarray(self.gl_widget.tip_position, dtype=float).reshape(3)
+        imu = np.asarray(self.gl_widget.imu_position, dtype=float).reshape(3)
+        sample = dict(zip(
+            ("q_w", "q_x", "q_y", "q_z",
+             "gyro_x_rad_s", "gyro_y_rad_s", "gyro_z_rad_s",
+             "acc_x_m_s2", "acc_y_m_s2", "acc_z_m_s2",
+             "roll_deg", "pitch_deg", "yaw_deg"),
+            q + gyro + acc + euler,
+        ))
+        sample.update({
+            "used_q_w": float(used_q[0]), "used_q_x": float(used_q[1]),
+            "used_q_y": float(used_q[2]), "used_q_z": float(used_q[3]),
+            "device_emit_ns": device_emit_ns,
+            "ui_receive_ns": ui_receive_ns,
+            "ui_done_ns": ui_done_ns,
+            "ui_queue_delay_ms": round((ui_receive_ns - device_emit_ns) / 1e6, 3),
+            "ui_processing_ms": round((ui_done_ns - ui_receive_ns) / 1e6, 3),
+            "axis_x": float(axis[0]), "axis_y": float(axis[1]), "axis_z": float(axis[2]),
+            "tip_x_mm": float(tip[0]), "tip_y_mm": float(tip[1]), "tip_z_mm": float(tip[2]),
+            "imu_x_mm": float(imu[0]), "imu_y_mm": float(imu[1]), "imu_z_mm": float(imu[2]),
+            "smoothing_enabled": int(self._smooth_enabled),
+            "translation_locked": int(self.observation_controller.locked),
+            "range_raw_mm": self.range_depth_panel.latest,
+            "range_filtered_mm": self.range_depth_panel.filtered_distance,
+            "range_baseline_mm": self.range_depth_panel.baseline,
+            "range_valid": int(self.observation_controller.range_valid),
+            "measured_displacement_mm": float(self.observation_controller.measured_displacement_mm),
+            "applied_displacement_mm": float(self.observation_controller.applied_displacement_mm),
+        })
+        if self._imu_recorder.push(sample):
+            self._stop_imu_diagnostic_recording("样本上限自动结束")
+
+    def _toggle_imu_diagnostic_recording(self):
+        if self._imu_recorder.active:
+            self._stop_imu_diagnostic_recording("手动结束")
+            return
+        if not self._is_observe_mode() or not self.device_manager.is_connected:
+            self.observation_panel.set_recording_state(False, "请先在姿态观察模式连接 IMU")
+            return
+        metadata = {
+            "mode": "姿态观察",
+            "port": self.device_manager.port,
+            "baudrate": self.device_manager.baudrate,
+            "needle_length_mm": self.needle_length,
+            "imu_geometry": load_config(),
+        }
+        self._imu_recorder.start(metadata)
+        self._imu_record_timer.start(120_000)
+        self.observation_panel.set_recording_state(
+            True, f"记录中；已包含触发前 {self._imu_recorder.sample_count} 帧，点击结束并保存"
+        )
+
+    def _stop_imu_diagnostic_recording(self, reason):
+        if not self._imu_recorder.active:
+            return
+        try:
+            path = self._imu_recorder.stop(reason)
+        except Exception as exc:
+            logger.exception("姿态诊断记录保存失败")
+            self.observation_panel.set_recording_state(True, f"保存失败：{exc}；可再次点击重试")
+            return
+        self._imu_record_timer.stop()
+        self.observation_panel.set_recording_state(
+            False, f"已保存：{path.name}\n位置：imu_diagnostic_logs（{reason}，同名 JSON 含配置）"
+        )
+        self.observation_panel.record_status_label.setToolTip(str(path))
+
+    def _toggle_observation_translation(self):
+        if not self._is_observe_mode():
+            return
+        was_locked = self.observation_controller.locked
+        self.observation_controller.toggle_lock()
+        if was_locked:
+            message = "已退出平移，针尖回到原点"
+            if self._observation_range_enabled:
+                self.range_depth_panel.stop()
+                self._observation_range_enabled = False
+            self.range_depth_panel.clear_baseline()
+        elif self.observation_controller.locked:
+            message = self.observation_controller.reason
+            if not self._observation_range_enabled:
+                self._observation_range_enabled = True
+                if self._range_auto_port:
+                    self._select_combo_port(
+                        self.range_depth_panel.ports, self._range_auto_port
+                    )
+                    self.range_depth_panel.start()
+                else:
+                    self.observation_panel.report_action("正在按 Space 后识别测距端口")
+                    self._start_auto_connection(probe_range=True)
+        else:
+            message = self.observation_controller.reason
+        self.observation_panel.report_action(message)
+        self._update_observation_panel()
+        self._refresh_3d_from_current_state()
+
+    def _refresh_3d_from_current_state(self):
+        """用当前姿态和控制器位置立即刷新 3D 针体。
+
+        测距线程和键盘事件都可能在两帧 IMU 数据之间改变针尖位置；
+        这里集中复用主线程中的 OpenGL 更新路径，保证数值与画面同步。
+        """
+        quaternion = getattr(self, "_current_quaternion", None)
+        if quaternion is None:
+            return
+        try:
+            imu_pos, tip_pos = self._calculate_positions_fast(quaternion)
+            self._cached_imu_pos = np.asarray(imu_pos, dtype=float)
+            self._cached_tip_pos = np.asarray(tip_pos, dtype=float)
+            self.gl_widget.update_data(imu_pos, tip_pos)
+        except Exception:
+            logger.exception("测距位移刷新 3D 失败")
+
+    def _on_space_pressed(self):
+        if self._is_observe_mode():
+            self._toggle_observation_translation()
+        elif self.sim_section.is_expanded():
+            self.sim_panel.lock_widget._toggle_lock()
+
+    def _update_observation_panel(self):
+        if not hasattr(self, "observation_panel"):
+            return
+        controller = self.observation_controller
+        reason = controller.reason
+        if self._is_observe_mode() and self.device_manager.is_connected and not controller.locked:
+            if not self._observation_range_enabled:
+                reason = "IMU 已连接，可按 Space 进入平移并启用测距"
+        self.observation_panel.update_state(
+            controller.state,
+            reason,
+            controller.measured_displacement_mm,
+            controller.applied_displacement_mm,
+            controller.angle_deg,
+            can_zero=bool(getattr(self.range_depth_panel, "zero", None)
+                          and self.range_depth_panel.zero.isEnabled()),
+            locked=controller.locked,
+        )
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space:
+            self._on_space_pressed()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def _calculate_positions_fast(self, quaternion):
         if self._is_observe_mode():
             direction = np.asarray(self._needle_direction, dtype=float).reshape(3)
-            tip_pos = np.zeros(3, dtype=float)
+            tip_pos = self.observation_controller.tip_position
             imu_pos = imu_position_from_tip(tip_pos, direction, float(self.needle_length))
             return np.asarray(imu_pos, dtype=float), tip_pos
 
@@ -912,11 +1340,7 @@ class MainWindow(QMainWindow):
         self.sim_panel.update_current_direction(inverted_direction)
 
     def closeEvent(self, event):
-        self._closing = True
-        self.range_depth_panel.shutdown()
-        self._stop_alignment_monitoring()
-        self.panel_update_timer.stop()
-        self.device_manager.disconnect()
+        self.shutdown_for_mode_switch()
         # 清理 CT 加载线程
         if self.ct_loader_thread is not None:
             self.ct_loader_thread.quit()
@@ -952,7 +1376,7 @@ class MainWindow(QMainWindow):
 
     def _on_ct_loaded(self, model_data):
         self._ct_loading = False
-        print("[Main] ✓ CT模型加载成功")
+        logger.info("CT模型加载成功")
         print(f"  顶点数: {model_data['num_vertices']}")
         print(f"  面数: {model_data['num_faces']}")
 
@@ -974,12 +1398,42 @@ class MainWindow(QMainWindow):
         center = np.asarray(model_data["center"], dtype=float)
         self._ct_model_center = center
         bbox = model_data.get("bbox") or {}
-        self._default_target_point = default_intracerebral_hemorrhage_target_mm(bbox)
+        if self._fixed_case_active and self._fixed_training_case:
+            self._default_target_point = np.asarray(
+                self._fixed_training_case["target_point_mm"], dtype=float
+            )
+        else:
+            self._default_target_point = default_intracerebral_hemorrhage_target_mm(bbox)
         self.target_point = self._default_target_point.copy()
         self.gl_widget.set_bleeding_point(self.target_point)
         self.puncture_panel.set_target_point(
             self.target_point, entry_point=None, from_default=True
         )
+
+        if self._fixed_case_active and self._fixed_training_case:
+            entry = np.asarray(self._fixed_training_case["entry_point_mm"], dtype=float)
+            vertices = np.asarray(model_data["vertices"], dtype=float)
+            nearest_distance = float(np.min(np.linalg.norm(vertices - entry, axis=1)))
+            plan_depth = float(np.linalg.norm(self.target_point - entry))
+            max_surface = float(self._fixed_training_case.get("entry_surface_tolerance_mm", 3.0))
+            expected_plan = float(self._fixed_training_case.get("expected_plan_depth_mm", plan_depth))
+            plan_tol = float(self._fixed_training_case.get("plan_depth_tolerance_mm", 3.0))
+            if nearest_distance > max_surface or abs(plan_depth - expected_plan) > plan_tol:
+                self._fixed_case_active = False
+                self._ct_model_loaded = False
+                self.ct_panel.set_model_loaded(False, {
+                    "error": (
+                        f"固定点几何核验失败：Entry 到网格最近点 {nearest_distance:.1f} mm，"
+                        f"规划深度 {plan_depth:.1f} mm"
+                    )
+                })
+                QMessageBox.critical(self, "固定点校验失败", "当前 CT 网格与固定训练点不匹配。")
+                return
+            center = np.asarray(model_data.get("center", [0, 0, 0]), dtype=float)
+            normal = entry - center
+            norm = float(np.linalg.norm(normal))
+            normal = normal / norm if norm > 1e-9 else np.array([0.0, 0.0, 1.0])
+            self._on_puncture_point_selected(entry, normal)
         print(
             f"[Main] 默认出血靶点（右豆状核区）: "
             f"[{self.target_point[0]:.1f}, {self.target_point[1]:.1f}, {self.target_point[2]:.1f}] mm"
@@ -991,6 +1445,8 @@ class MainWindow(QMainWindow):
 
         self._apply_operation_mode_ui()
         self._refresh_workflow_steps()
+        if not self._is_observe_mode():
+            QTimer.singleShot(300, self._start_auto_connection)
 
     def _on_ct_failed(self, error_msg):
         self._ct_loading = False
@@ -1207,7 +1663,9 @@ class MainWindow(QMainWindow):
 
         if self._is_observe_mode():
             self.gl_widget._camera_adjusted = False
-            self.gl_widget.set_needle_tip_position([0.0, 0.0, 0.0])
+            # 观察模式的针尖由平移控制器提供，不使用穿刺模式的固定针尖覆盖。
+            self.gl_widget.clear_fixed_tip_position()
+            self.gl_widget.tip_position = np.zeros(3, dtype=float)
             self._update_needle_direction_fast(self._current_quaternion)
             imu_pos, tip_pos = self._calculate_positions_fast(self._current_quaternion)
             self.gl_widget.update_data(imu_pos, tip_pos)
@@ -1278,12 +1736,17 @@ class MainWindow(QMainWindow):
         angle_error_deg = np.degrees(np.arccos(dot_product))
         self._current_angle_error_deg = angle_error_deg
 
-        # 计算 correction 用于罗盘显示
+        # 罗盘显示当前针轴相对目标的屏幕方向，圆点随针体在 3D 视图中同向移动。
         curr_u = np.asarray(current_direction, dtype=float)
         curr_u = curr_u / np.linalg.norm(curr_u)
         targ_u = np.asarray(target_direction, dtype=float)
         targ_u = targ_u / np.linalg.norm(targ_u)
-        correction = targ_u - curr_u * np.dot(targ_u, curr_u)
+        # 3D 针体从固定针尖沿 -needle_direction 延伸；罗盘显示可见针杆
+        # 相对目标针杆的偏离，因此要使用针轴偏差的相反方向。
+        deviation = targ_u * np.dot(curr_u, targ_u) - curr_u
+        projected = self.gl_widget.view.viewMatrix().mapVector(
+            QVector3D(float(deviation[0]), float(deviation[1]), float(deviation[2]))
+        )
 
         thr = self._ALIGN_THRESHOLD_DEG
         if angle_error_deg <= thr:
@@ -1297,12 +1760,12 @@ class MainWindow(QMainWindow):
                 self.alignment_hud.set_status("★ 对准，测距进针")
             else:
                 self.alignment_hud.set_status("保持对准 0.3 秒")
-        elif angle_error_deg < thr * 2:
+        elif angle_error_deg <= PunctureDepthController.PAUSE_THRESHOLD_DEG:
             self.alignment_hud.set_status("接近目标")
         else:
             self.alignment_hud.set_status("需调整姿态")
 
-        self.alignment_hud.set_guidance(correction, angle_error_deg)
+        self.alignment_hud.set_guidance((projected.x(), projected.y()), angle_error_deg)
 
         self._puncture_tick(angle_error_deg)
 
@@ -1314,12 +1777,13 @@ class MainWindow(QMainWindow):
         self._consume_puncture_events(events)
 
     def _apply_tip_at_depth(self, depth_mm: float):
-        """仅更新 override tip；下一帧 IMU 数据会自动用 override 算 imu_pos 并刷新 3D。"""
+        """更新 Entry→Target 方向上的针尖，并立即刷新 3D。"""
         if self.puncture_point is None or not hasattr(self, "target_direction_world"):
             return
         entry = np.asarray(self.puncture_point, dtype=float)
         dir_w = np.asarray(self.target_direction_world, dtype=float)
         self._puncture_override_tip = entry + dir_w * depth_mm
+        self._refresh_3d_from_current_state()
 
     def _on_puncture_reset(self):
         self._puncture_current_depth = 0.0
@@ -1383,4 +1847,10 @@ class MainWindow(QMainWindow):
         self._update_target_direction_world()
         self.gl_widget.set_entry_target_line(entry, tgt)
         self._apply_tip_at_depth(0.0)
+        if not self.device_manager.is_connected and self.target_direction_world is not None:
+            self.gl_widget.update_needle_direction(self.target_direction_world)
+        self.gl_widget.set_needle_tip_position(entry)
+        if self._fixed_case_active:
+            self.puncture_panel.set_fixed_case_mode(True)
+            self.gl_widget.frame_training_needle()
         self._refresh_workflow_steps()

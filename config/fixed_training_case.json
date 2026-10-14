@@ -1,0 +1,15 @@
+{
+  "case_id": "ct6_fixed_training_v1",
+  "relative_dicom_path": "../CT6",
+  "expected_series_instance_uid": "1.2.840.113704.1.111.7368.1754208474.18",
+  "expected_slice_count": 729,
+  "expected_rows": 512,
+  "expected_columns": 512,
+  "expected_image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+  "expected_pixel_spacing": [0.490234, 0.490234],
+  "entry_point_mm": [12.0, 22.84, 97.81],
+  "target_point_mm": [-15.0, 25.0, 30.0],
+  "expected_plan_depth_mm": 73.0,
+  "entry_surface_tolerance_mm": 3.0,
+  "plan_depth_tolerance_mm": 3.0
+}

@@ -21,9 +21,12 @@ except ImportError:
 
 
 FREQUENCY_CODES = {5: 0x05, 10: 0x0A, 20: 0x14}
+CONFIG_ACK_TIMEOUT_S = 0.35
+FIRST_FRAME_TIMEOUT_S = 2.0
+FIRST_FRAME_RETRY_AFTER_S = 0.8
 
 
-def configure_output(device, stop, frequency_hz=10, timeout=8):
+def configure_output(device, stop, frequency_hz=10, timeout=CONFIG_ACK_TIMEOUT_S):
     """Set the documented output interval to zero, then set output frequency.
 
     This does not shorten the sensor's internal measurement/recovery time.
@@ -58,8 +61,13 @@ def configure_output(device, stop, frequency_hz=10, timeout=8):
 def capture(args, events, stop):
     """Serial and disk IO stay off the GUI thread. Every reply is logged."""
     path = None
+    finish_reason = ""
     try:
-        folder = Path(__file__).resolve().parents[1] / 'rangefinder_test_logs'
+        folder = Path(getattr(
+            args,
+            'log_dir',
+            Path(__file__).resolve().parents[1] / 'rangefinder_test_logs',
+        ))
         folder.mkdir(exist_ok=True)
         path = folder / ('laser100m_live_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '.csv')
         with path.open('w', newline='', encoding='utf-8-sig') as log:
@@ -71,8 +79,12 @@ def capture(args, events, stop):
                 device.dtr = False
                 device.rts = False
                 device.open()
-                events.put(('status', f'串口已连接，依次设置输出间隔0和{args.frequency} Hz；每项最多等待8秒…'))
-                settings = configure_output(device, stop, args.frequency)
+                events.put(('connected', f'串口已打开：{args.port}，正在启动测距'))
+                events.put(('status', f'串口已连接，设置输出间隔0和{args.frequency} Hz；每项最多等待{CONFIG_ACK_TIMEOUT_S:g}秒…'))
+                # 配置应答不是开始采集的必要条件。设备没有回 ACK 时快速
+                # 放弃等待，继续请求测量，避免连接阶段固定阻塞约 16 秒。
+                settings = configure_output(device, stop, args.frequency,
+                                             timeout=CONFIG_ACK_TIMEOUT_S)
                 with path.with_suffix('.settings.json').open('w', encoding='utf-8') as settings_file:
                     json.dump({'port': args.port, 'baud': 9600,
                                'near_offset_max_mm': args.offset_mm,
@@ -94,18 +106,29 @@ def capture(args, events, stop):
                             f'{args.port} | {interval_text} | {frequency_text} | '
                             f'≤{args.offset_full_until_mm:g} mm补偿 {args.offset_mm:+g} mm，'
                             f'至{args.offset_zero_from_mm:g} mm归零'))
+                continuous_command = command(0x80, 6, 3)
                 device.reset_input_buffer()
-                device.write(command(0x80, 6, 3))
+                device.write(continuous_command)
                 device.flush()
-                events.put(('status', '已请求连续测量，等待距离数据…'))
+                events.put(('status',
+                            f'已请求连续测量，等待首帧（最多 {FIRST_FRAME_TIMEOUT_S:g} 秒）…'))
                 parser = Laser100mParser()
                 started = time.monotonic()
                 last_flush = started
                 last_reply = None
+                first_frame_received = False
+                continuous_attempts = 1
+                first_frame_deadline = started + FIRST_FRAME_TIMEOUT_S
+                retry_at = started + FIRST_FRAME_RETRY_AFTER_S
+                rx_bytes = 0
                 while not stop.is_set():
                     chunk = device.read(min(device.in_waiting or 1, 4096))
+                    rx_bytes += len(chunk)
                     now = time.monotonic()
-                    for frame in parser.feed(chunk):
+                    frames = parser.feed(chunk)
+                    if frames:
+                        first_frame_received = True
+                    for frame in frames:
                         raw = frame.distance_mm
                         offset = applied_offset_mm(raw, args.offset_mm,
                                                    args.offset_full_until_mm,
@@ -123,13 +146,29 @@ def capture(args, events, stop):
                         last_reply = now
                         events.put(('frame', now-started, now, raw, corrected, status,
                                     frame.error_code, parser.bad_checksum))
+                    if not first_frame_received:
+                        if continuous_attempts == 1 and now >= retry_at:
+                            device.reset_input_buffer()
+                            device.write(continuous_command)
+                            device.flush()
+                            continuous_attempts = 2
+                            events.put(('status', '首帧未到，已快速重发连续测量命令'))
+                        if now >= first_frame_deadline:
+                            finish_reason = (
+                                f'首帧超时 {FIRST_FRAME_TIMEOUT_S:g}s；'
+                                f'尝试 {continuous_attempts} 次，收到 {rx_bytes} 字节，'
+                                f'校验失败 {parser.bad_checksum}，解析失败 {parser.bad_payload}'
+                            )
+                            events.put(('status', finish_reason))
+                            break
                     if now-last_flush >= 1:
                         log.flush()
                         last_flush = now
     except Exception as exc:
         events.put(('status', f'采集失败：{exc}'))
+        finish_reason = f'采集失败：{exc}'
     finally:
-        events.put(('finished', str(path) if path else '未创建记录'))
+        events.put(('finished', str(path) if path else '未创建记录', finish_reason))
 
 
 class LiveWindow(QtWidgets.QWidget):
@@ -359,7 +398,8 @@ class LiveWindow(QtWidgets.QWidget):
                 self.start_button.setEnabled(True)
                 self.stop_button.setEnabled(False)
                 self.record_comparison_button.setEnabled(False)
-                self.log_label.setText('记录：' + event[1])
+                reason = event[2] if len(event) > 2 and event[2] else ''
+                self.log_label.setText('记录：' + event[1] + (f'；{reason}' if reason else ''))
                 self._set_value_text('已停止')
                 if self.close_pending:
                     QtCore.QTimer.singleShot(100, self.close)

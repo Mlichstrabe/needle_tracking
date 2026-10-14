@@ -364,7 +364,8 @@ class DeviceConnectionPanel(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
 
         mode_layout = QHBoxLayout()
-        mode_layout.addWidget(QLabel("工作模式"))
+        self.mode_label = QLabel("工作模式")
+        mode_layout.addWidget(self.mode_label)
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("穿刺训练（需 CT + Entry）", self.MODE_PUNCTURE_TRAINING)
         self.mode_combo.addItem("姿态观察（仅看针体）", self.MODE_NEEDLE_OBSERVE)
@@ -466,6 +467,17 @@ class DeviceConnectionPanel(QWidget):
 
     def set_mode_switch_enabled(self, enabled: bool):
         self.mode_combo.setEnabled(enabled)
+
+    def set_fixed_mode(self, mode: str):
+        """模式由启动选择窗口决定，工作页内只显示当前模式。"""
+        index = self.mode_combo.findData(mode)
+        if index >= 0:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(index)
+            self.mode_combo.blockSignals(False)
+        self.mode_combo.setVisible(False)
+        self.mode_label.setText("模式")
+        self.observe_hint.setVisible(mode == self.MODE_NEEDLE_OBSERVE)
 
     def _on_connect(self):
         """点击连接按钮"""
@@ -639,6 +651,7 @@ class PuncturePointPanel(QFrame):
         # 编号顺序：① Entry → ② Target → ③ 进针
         step1_title = QLabel("① 选择 Entry")
         step1_title.setObjectName("SectionTitle")
+        self.entry_title = step1_title
         layout.addWidget(step1_title)
 
         self.hint_label = QLabel("请先导入 CT 模型")
@@ -696,6 +709,7 @@ class PuncturePointPanel(QFrame):
 
         target_title = QLabel("② 选择 Target")
         target_title.setObjectName("SectionTitle")
+        self.target_title = target_title
         layout.addWidget(target_title)
 
         self.target_hint_label = QLabel("Entry 选定后将自动使用默认 Target，点击续接即可")
@@ -762,10 +776,12 @@ class PuncturePointPanel(QFrame):
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setObjectName("Separator")
+        self.puncture_separator = sep
         layout.addWidget(sep)
 
         hdr = QLabel("③ 测距进针进度")
         hdr.setObjectName("SectionTitle")
+        self.puncture_header = hdr
         layout.addWidget(hdr)
 
         self.puncture_depth_label = QLabel("当前: 0.0 / -- mm")
@@ -806,7 +822,7 @@ class PuncturePointPanel(QFrame):
         labels = {
             "PREPARING": ("等待 CT、Entry 和规划路径", "muted"),
             "WAITING_DEVICES": ("等待连接设备或记录测距零点", "muted"),
-            "ALIGNING": ("▶ 请将姿态对准 3° 内", "warn"),
+            "ALIGNING": ("▶ 请将姿态对准 5° 内", "warn"),
             "PUNCTURING": ("▶ 测距驱动进针中...", "ok"),
             "ANGLE_PAUSED": ("Ⅱ 姿态偏离，深度应用暂停", "warn"),
             "RANGE_INVALID": ("⚠ 测距无效，深度应用暂停", "danger"),
@@ -887,6 +903,19 @@ class PuncturePointPanel(QFrame):
         else:
             self.set_model_loaded(ct_loaded)
 
+    def set_fixed_case_mode(self, enabled: bool):
+        """固定病例只常显进针深度，点位详情由三维标记呈现。"""
+        self._fixed_case_mode = bool(enabled)
+        self.puncture_separator.setVisible(not enabled)
+        self.puncture_header.setText("进针深度" if enabled else "③ 测距进针进度")
+        for widget in (
+            self.entry_title, self.hint_label, self.start_btn, self.coord_widget,
+            self.reselect_btn, self.target_title, self.target_hint_label,
+            self.target_pick_btn, self.target_default_btn, self.target_coord_widget,
+            self.target_reselect_btn,
+        ):
+            widget.setVisible(not enabled)
+
     def set_selecting_mode(self, selecting):
         """设置选择模式"""
         if getattr(self, "_observe_mode", False):
@@ -914,8 +943,8 @@ class PuncturePointPanel(QFrame):
         _apply_hint_state(self.hint_label, "穿刺点已选择", "success")
 
         self.start_btn.setVisible(False)
-        self.coord_widget.setVisible(True)
-        self.reselect_btn.setVisible(True)
+        self.coord_widget.setVisible(not getattr(self, "_fixed_case_mode", False))
+        self.reselect_btn.setVisible(not getattr(self, "_fixed_case_mode", False))
 
         if not getattr(self, "_observe_mode", False):
             self.target_pick_btn.setVisible(False)
@@ -951,7 +980,7 @@ class PuncturePointPanel(QFrame):
             self.target_depth_label.setText("Entry→Target: -- mm")
         src = "默认 Target" if from_default else "Target 已选择"
         _apply_hint_state(self.target_hint_label, src, "success")
-        self.target_coord_widget.setVisible(True)
+        self.target_coord_widget.setVisible(not getattr(self, "_fixed_case_mode", False))
         self.target_reselect_btn.setVisible(False)
         self.target_pick_btn.setVisible(False)
         self.target_default_btn.setVisible(False)
@@ -1017,9 +1046,9 @@ class GuidanceArrowWidget(QWidget):
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     def set_guidance(self, correction_3d, angle_deg):
-        """设置引导方向"""
+        """设置针轴偏差在当前 3D 相机中的屏幕投影（x 向右，y 向上）。"""
         self._angle_deg = angle_deg
-        cx, cy, _ = correction_3d
+        cx, cy = correction_3d[:2]
         mag = (cx*cx + cy*cy + 1e-12) ** 0.5
         self._dot_x = cx / mag if mag > 0.01 else 0.0
         self._dot_y = -cy / mag if mag > 0.01 else 0.0

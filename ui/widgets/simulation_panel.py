@@ -2,7 +2,7 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QFrame,
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import pyqtSignal
 import numpy as np
 
 from ui.widgets.ui_helpers import set_button_variant, set_label_role, make_hint_label
@@ -21,10 +21,10 @@ class OrientationLockWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.lock_btn = QPushButton("锁定当前姿态")
-        self.lock_btn.setShortcut(Qt.Key_Space)
         set_button_variant(self.lock_btn, "secondary")
         self.lock_btn.clicked.connect(self._toggle_lock)
         layout.addWidget(self.lock_btn)
+
 
         self.status_label = QLabel("未锁定")
         set_label_role(self.status_label, "muted")

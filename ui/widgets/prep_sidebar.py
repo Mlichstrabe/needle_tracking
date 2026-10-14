@@ -51,6 +51,9 @@ class PrepSection(QFrame):
     def set_expanded(self, expanded):
         self._header.setChecked(expanded)
 
+    def is_expanded(self):
+        return self._header.isChecked()
+
 
 class PrepSidebar(QWidget):
     """影像 / 设备 / 遥测 / 测距四块准备手风琴。"""

@@ -9,7 +9,9 @@
 - **类型**：PyQt5 桌面应用（非 Web）
 - **场景**：手术探针 / IMU 穿刺**训练**（角度对准），非临床导航
 - **版本定位**：**无配准** — 不做 CT↔患者刚性配准；穿刺训练中针尖固定在 Entry（进针时由测距深度驱动），姿态观察中针尖固定在原点、IMU 端随姿态移动
-- **入口**：`main.py` → `ui.main_window.MainWindow`
+- **入口**：`main.py` → `ui.mode_selector.ModeSelector` → `ui.main_window.MainWindow`
+
+启动先选择「姿态观察」或「穿刺模拟」。两种模式使用左侧 3D、右侧控制区的两栏布局；观察模式不加载 CT，穿刺模拟自动核验并加载 `config/fixed_training_case.json` 指定的训练 CT。
 
 ### JetArm marker 实验线（支线，不接主窗口）
 
@@ -39,11 +41,14 @@ README 中若仍出现上述名称，以本文件与当前目录为准。
 ## 3. 目录与职责
 
 ```text
-main.py                    # QApplication、高 DPI、加载 stylesheet.qss
+main.py                    # QApplication、高 DPI、模式选择与工作页生命周期
 core/
   device_manager.py        # 串口线程；帧 0x55；信号 data_received / connected
   dicom_loader.py          # DICOM → mesh；信号 loading_finished / progress_updated
   imu_kinematics.py        # 四元数 → 针轴（场景系）；tip ↔ IMU 位置
+  observation_translation_controller.py # 姿态观察锁轴平移状态机
+  imu_diagnostic_recorder.py # 姿态异常触发前 10 秒缓存与 CSV/JSON 记录
+  serial_auto_connector.py # IMU/测距协议探测
 ui/
   main_window.py           # ★ 编排中心：信号、定时器、业务顺序
   widgets/
@@ -56,6 +61,8 @@ ui/
   simulation_panel.py    # 右栏路径引导 + 姿态锁定
   puncture_point_selector.py  # 3D 点击选点（trimesh BVH）
   range_depth_panel.py         # 100m 测距采集、滤波、零点与深度信号
+  observation_panel.py          # 姿态观察常显状态与 Space 操作
+  mode_selector.py              # 启动模式选择窗口
 styles/stylesheet.qss      # 全局暗色主题（局部仍有内联 setStyleSheet）
 ```
 
@@ -66,12 +73,16 @@ styles/stylesheet.qss      # 全局暗色主题（局部仍有内联 setStyleShe
 ## 4. 当前用户流程（唯一主路径）
 
 ```text
+模式选择
+  ├─ 姿态观察：连接 IMU → Space 立即锁定针轴并启用测距 → 记录零点 → 沿针轴双向平移
+  └─ 穿刺模拟：自动核验并加载固定 CT
+       ↓
 加载 DICOM (CTModelPanel)
-  → 开始选择 Entry (PuncturePointPanel) → 3D 点击 (PuncturePointSelector)
+  → 使用固定 Entry/Target、计算规划深度
   → 自动使用默认 Target、计算规划深度
   → 分别连接 IMU 与 100m 测距模块
   → 针尖锚定 Entry、记录测距零点
-  → 姿态进入 3° 阈值 → 测距深度驱动进度与 Entry→Target 方向上的 3D 训练针尖
+  → 姿态进入 5° 阈值 → 测距深度驱动进度与 Entry→Target 方向上的 3D 训练针尖
   → 连续 3 个有效样本达到规划深度 → 完成
   → [可选] 右侧 SimulationPanel：引导模式 / 姿态锁定 → 3D 预设/目标路径虚线
 ```
@@ -116,9 +127,8 @@ flowchart LR
 
 | 区域 | 内容 |
 |------|------|
-| 左栏（可滚动手风琴） | CT 导入 → 设备连接（含校准）→ IMU（欧拉/四元数、重置视角/清轨迹）→ 实时穿刺深度（100m 测距，默认收起）；按当前流程自动展开一项 |
-| 中栏 | 全高 `GLVisualizationWidget` |
-| 右栏 | 固定实时区：对准 HUD；下方独立滚动：穿刺点面板 + 路径引导面板 |
+| 左栏 | 全高 `GLVisualizationWidget` |
+| 右栏 | 单滚动操作区；设备、CT、原始遥测和路径引导折叠；穿刺模式常显对准/深度，观察模式常显零点/锁轴平移 |
 
 窗口启动：`MainWindow._apply_window_geometry()` 按屏幕可用区域约 **88%** 缩放并居中。
 
@@ -135,6 +145,10 @@ flowchart LR
 - **穿刺点**：`start_selection_clicked` / `reselect_clicked`；`PuncturePointSelector.point_selected`
 - **测距面板**：`sensor_state_changed` / `range_sample` / `range_validity_changed` / `baseline_changed`
 - **穿刺状态机**：`core/puncture_depth_controller.py` 接收姿态、设备、零点和测距数据，输出状态、应用深度与完成事件
+- **自动连接**：协议验证 IMU 的 0x55 帧和测距模块的 0x80 响应；无唯一匹配时不猜测端口
+- **观察平移**：`core/observation_translation_controller.py`；当前工作页设置 `require_stationary=False`、`enforce_angle_pause=False`，Space 立即锁定有效针轴并启用测距；测距无效时冻结位置，失败原因在操作按钮下方保留。控制器默认仍保留静止判断和 10° 角度暂停，不能将默认值当作工作页实际配置
+- **姿态异常记录**：姿态观察页按钮触发 `core/imu_diagnostic_recorder.py`；保存前 10 秒与触发后的 IMU、显示针轴及测距状态到 `imu_diagnostic_logs/`，最长 120 秒自动结束
+- **测距连接**：`tools/laser100m_live.py` 的配置应答单项最多等待 0.35 秒，首帧最多等待 2 秒并重发一次；超时必须通过状态文字暴露字节数和解析诊断，不能无限等待
 - **模拟**：`simulation_started` / `simulation_stopped` / `orientation_locked`
 
 **不存在**：`puncture_session.*`、`path_selected`（除非重新实现）。
@@ -165,7 +179,7 @@ flowchart LR
 3. **样式**：新控件优先复用 `stylesheet.qss`；与现有 `panels.py` 卡片风格一致。
 4. **无配准**：不要默认加 IMU 位移积分或「全空间轨迹」除非用户明确要求新版本。
 5. **提交**：用户未要求时不要 `git commit`；文档与代码同步更新 README/本文件。
-6. **测试**：无自动化测试；改完至少 `python main.py` 能启动，串口/DICOM 路径需用户本机验证。
+6. **测试**：运行 `python -m unittest discover -s tests -p "test_*.py" -v` 核验离线状态逻辑、协议和记录功能；改完至少 `python main.py` 能启动，串口/DICOM 路径需用户本机验证。
 
 ---
 
@@ -207,7 +221,7 @@ python main.py
 
 ## 14. 文档版本
 
-- 2026-09-16：`RangeDepthPanel` 移入左栏 `PrepSidebar` 第 4 个可折叠分区，默认收起；右栏仅保留对准 HUD 与可滚动的穿刺点/路径操作区，避免测距卡片遮挡 Entry 选点。新增 `PunctureDepthController`：取消固定 10 秒自动进针，采用 3°准入、4°暂停和测距深度驱动的穿刺状态机；与 IMU 互斥占用串口，关闭主窗口时停止采集。
+- 2026-09-22：穿刺实时工作区合并角度 HUD 与进针深度；罗盘改为按可见针杆方向显示偏离；`PunctureDepthController` 采用 5°准入、超过 8°暂停和测距深度驱动的穿刺状态机。
 
 - 对齐 git：`master` 上 README + 无 `puncture_session` / 三视图 之后的结构
 - 若目录与本文冲突，以 **仓库实际文件** 为准，并应更新本文档
